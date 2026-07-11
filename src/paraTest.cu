@@ -14,7 +14,8 @@
 template <typename SIZE_TYPE>
 class ParallelTracker {
 public:
-    static constexpr size_t MAX_TRACKED_OBJECTS = TestSlabArena::SLAB_COUNT * 1024;
+    static constexpr size_t MAX_TRACKED_OBJECTS = SIZE_TYPE::VALUE;
+    const size_t MAX_SLAB_OBJ_COUNT = MAX_TRACKED_OBJECTS / TestSlabArena::SLAB_COUNT;
 
 private:
     std::unique_ptr<uint32_t[]> trackingArena;
@@ -68,26 +69,32 @@ public:
 
     // figure out arena index for a pointer
     size_t getIndexForPtr(void* ptr, TestSlabArena& arena) {
-
-        if (!ptr) { 
+        if (!ptr) {
+            Log() << "BAD POINTER" << std::endl;
             return MAX_TRACKED_OBJECTS;
         }
         
         // find slab index holding ptr
         auto slabInd = arena.slabIndexFor(ptr);
-        if(slabInd >= TestSlabArena::SLAB_COUNT)
+        if(slabInd >= TestSlabArena::SLAB_COUNT) {
+            Log() << "SLAB INDEX PAST BOUNDS" << std::endl;
             return MAX_TRACKED_OBJECTS;
+        }
         
         auto& proxy = arena.proxyAt(slabInd).data;
         size_t objectSz = proxy.getSize();
 
-        if(objectSz == 0)
+        if(objectSz == 0) {
+            Log() << "OBJECT SIZE IS 0" << std::endl;
             return MAX_TRACKED_OBJECTS;
+        }
         
         // find capacity for slab
         size_t maxObj = proxy.slabObjCount(objectSz);
-        if(maxObj == 0)
+        if(maxObj == 0) {
+            Log() << "slabObjCount CALCULATION ERROR" << std::endl;
             return MAX_TRACKED_OBJECTS;
+        }
 
         // find beginning - skip mask
         auto& slab = arena.slabAt(slabInd);
@@ -100,47 +107,52 @@ public:
         size_t maskElemCount = (maxObj + proxy.SLAB_ELEM_BIT_SIZE - 1) / proxy.SLAB_ELEM_BIT_SIZE;
         size_t maskOverhead = (maskElemCount > 1) ? maskElemCount * sizeof(typename TestSlabArena::slabProxyType::allocMaskElem) : 0;
 
-        if(offset < maskOverhead)
+        if(offset < maskOverhead) {
+            Log() << "OFFSET IS IN SLAB MASK" << std::endl;
             return MAX_TRACKED_OBJECTS;
+        }
         
         // alignment check
         size_t objectOffset = offset - maskOverhead;
-        if(objectOffset % objectSz != 0)
+        if(objectOffset % objectSz != 0) {
+            Log() << "MISALIGNED POINTER" << std::endl;
             return MAX_TRACKED_OBJECTS;
+        }
 
         size_t objectInd = objectOffset / objectSz;
-        if(objectInd >= maxObj)
+        if(objectInd >= maxObj) {
+            Log() << "OBJECT INDEX PAST BOUNDS" << std::endl;
             return MAX_TRACKED_OBJECTS;
+        }
 
         // calc total global ind
         size_t globalInd = 0;
-        for(size_t i = 0; i < slabInd; i++){
-            auto& prevProxy = arena.proxyAt(i).data;
-            size_t prevSize = prevProxy.getSize();
+        for(size_t i = 0; i < slabInd; i++)
+            globalInd += MAX_SLAB_OBJ_COUNT;
 
-            if(prevSize > 0){
-                size_t prevCap = prevProxy.slabObjCount(prevSize);
-                globalInd += prevCap;
-            } else {
-                // for unallocated slabs -> safe estimate
-                globalInd += 256;
-            }
-
-            if(globalInd >= MAX_TRACKED_OBJECTS)
-                return MAX_TRACKED_OBJECTS;
+        if(globalInd >= MAX_TRACKED_OBJECTS) {
+            Log() << "GLOBAL INDEX OF SLAB PAST BOUNDS" << std::endl;
+            return MAX_TRACKED_OBJECTS;
         }
         
         globalInd += objectInd;
 
-        return (globalInd < MAX_TRACKED_OBJECTS) ? globalInd : MAX_TRACKED_OBJECTS;
+        if (globalInd >= MAX_TRACKED_OBJECTS) {
+            Log() << "GLOBAL INDEX OF OBJECT PAST BOUNDS" << std::endl;
+            return MAX_TRACKED_OBJECTS;
+        }
+        else {
+            Log() << "getIndexForPointer SUCCEEDED" << std::endl;
+            return globalInd;
+        }
     }
     
     // log an allocation with CAS
     bool recordAllocation(void* ptr, size_t size, uint16_t threadId, TestSlabArena& arena) {
         size_t index = getIndexForPtr(ptr, arena);
         if (index >= MAX_TRACKED_OBJECTS) {
-            Log() << ":( - Failed: Allocation index for size "<< size 
-                  << " at " << ptr <<" exceeds arena bounds!" << std::endl;
+            Log() << ":( - Failed: Allocation index for size " << size
+                  << " at " << ptr << " exceeds arena bounds!" << std::endl;
             return false;
         }
 
