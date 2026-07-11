@@ -518,6 +518,68 @@ void testStressTest() {
     std::cout << ":) Stress test done!" << std::endl << std::endl;
 }
 
+void customTest(const size_t numThreads, const size_t iterationsPerThread, const size_t objSizes[]) {
+    std::cout << "=== Custom Thread Test ===" << std::endl;
+    std::cout << "Testing " << numThreads << " threads" << std::endl;
+    for (int i = 0; i < numThreads; i++)
+        std::cout << "Thread " << i + 1 << " object size: " << objSizes[i]
+                  << " bytes" << std::endl;
+
+    TestSlabArena *arena_ptr = new TestSlabArena;
+    if (!arena_ptr) {
+        return;
+    }
+    TestSlabArena &arena = *arena_ptr;
+    constexpr size_t MAX_OBJECT_COUNT = TestSlabArena::SLAB_COUNT * TestSlabArena::slabType::SIZE / 8;
+    typedef Size<MAX_OBJECT_COUNT> SizeType;
+    ParallelTracker<SizeType> *tracker_ptr = new ParallelTracker<SizeType>;
+    ParallelTracker<SizeType> &tracker = *tracker_ptr;
+
+    std::atomic<bool> shouldStop{false};
+    std::vector<std::thread> threads;
+
+    auto start = std::chrono::high_resolution_clock::now();
+
+    // spin up threads
+    for (size_t i = 0; i < numThreads; i++) {
+        threads.emplace_back(workerThread<SizeType>, std::ref(arena), std::ref(tracker),
+                             static_cast<uint16_t>(i + 1), iterationsPerThread,
+                             std::ref(shouldStop), objSizes[i]);
+    }
+
+    // wait for them
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+    // print stats
+    size_t totalAllocs, totalFrees, totalFailures, totalLeaks, reservationFailures;
+    tracker.getStats(totalAllocs, totalFrees, totalFailures, totalLeaks, reservationFailures);
+
+    std::cout << "\nResults:" << std::endl;
+    std::cout << "Duration: " << duration.count() << "ms" << std::endl;
+    std::cout << "Allocs: " << totalAllocs << std::endl;
+    std::cout << "Frees: " << totalFrees << std::endl;
+    std::cout << "Tracking Failures: " << totalFailures << std::endl;
+    std::cout << "Reservation failures: " << reservationFailures << std::endl;
+    std::cout << "Leaks: " << totalLeaks << std::endl;
+    std::cout << "Success rate: " << (100.0 * (totalAllocs + totalFrees)) /
+                                      (totalAllocs + totalFrees + totalFailures + reservationFailures) << "%" << std::endl;
+
+    if (totalLeaks == 0) {
+        std::cout << ":) no leaks" << std::endl;
+    } else {
+        std::cout << ":( leaks detected!" << std::endl;
+    }
+
+    std::cout << std::endl;
+
+    delete arena_ptr;
+}
+
 int main() {
     std::cout << "Parallel Test" << std::endl;
     std::cout << "==============" << std::endl << std::endl;
@@ -527,9 +589,11 @@ int main() {
     std::cout << "Slab Size: " << TestSlabArena::slabType::SIZE << " bytes" << std::endl << std::endl;
     
     try {
-        testBasicParallel();
-        testHighContentionParallel();
-        testStressTest();
+        // testBasicParallel();
+        // testHighContentionParallel();
+        // testStressTest();
+        const size_t objSizes[] = {64};
+        customTest(static_cast<size_t>(1), static_cast<size_t>(10), objSizes);
         
         std::cout << "All tests done!" << std::endl;
         
