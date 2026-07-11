@@ -154,10 +154,10 @@ public:
             return true;
         }
 
-        uint32_t bad_size = (expected>>16) & 0xFFFF;
-        uint32_t bad_id   = expected & 0xFFFF;
+        uint32_t bad_size = (old>>16) & 0xFFFF;
+        uint32_t bad_id   = old & 0xFFFF;
         Log() << ":( - Failed to allocate size " << size
-              << ". Expected 0, but found (" << bad_size << "," <<bad_id << ")" << std::endl;
+              << ". Expected 0, but found (" << bad_size << "," << bad_id << ")" << std::endl;
         intr::atomic::add_system(&totalFailures, size_t{1});
         return false;
     }
