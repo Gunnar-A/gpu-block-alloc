@@ -101,14 +101,21 @@ struct defaultSlabProxy {
 
     // atomics..
     __host__ __device__
-    bool tryClaim(size_t objectSz){
+    bool tryClaim(SLAB_TYPE* slab, size_t objectSz){
         AllocState expected = 0;
         AllocState newState = ((AllocState)objectSz) << OFFSET;
 
         AllocState old = intr::atomic::CAS_acq_rel(&allocState, expected, newState);
         if(old == expected){
+            size_t maxObjCount = slabObjCount(objectSz);
+            if (maxObjCount <= SLAB_ELEM_BIT_SIZE)
+                intr::atomic::store_relaxed(&allocMask, static_cast<allocMaskElem>(0));
+            else {
+                size_t maskElemCount = (maxObjCount + SLAB_ELEM_BIT_SIZE - 1) / SLAB_ELEM_BIT_SIZE;
+                for (int i = 0; i < maskElemCount; i++)
+                    intr::atomic::store_relaxed(&slab->data[i], static_cast<allocMaskElem>(0));
+            }
             intr::atomic::store_release(&reservationState, static_cast<uint32_t>(PARTIAL));
-            intr::atomic::store_relaxed(&allocMask, static_cast<allocMaskElem>(0));
             printf("Successfully claimed\n");
             return true;
         }
@@ -200,7 +207,8 @@ struct defaultSlabProxy {
     __host__ __device__
     void* indexToPtr(SLAB_TYPE* slab, size_t objectSize, size_t maskElemCount, size_t ind){
         char* bytePtr = static_cast<char*>(static_cast<void*>(slab));
-        bytePtr += sizeof(allocMaskElem) * maskElemCount;
+        if (maskElemCount > 1)
+            bytePtr += sizeof(allocMaskElem) * maskElemCount;
         bytePtr += objectSize * ind;
 
         return static_cast<void*>(bytePtr);
@@ -309,7 +317,7 @@ struct defaultSlabProxy {
         // calc object index
         size_t maskCount = (maxObjCount + SLAB_ELEM_BIT_SIZE - 1) / SLAB_ELEM_BIT_SIZE;
         size_t maskSize = maskCount * sizeof(allocMaskElem);
-        size_t firstObjOffset = maskSize;
+        size_t firstObjOffset = (maskCount > 1) ? maskSize : 0;
 
         // invalid ptr
         if(byteOffset < firstObjOffset)
@@ -584,7 +592,8 @@ class SlabArena {
 
             while (freeSlab != NULL_ADDR) {
                 slabProxyType& proxy = proxies.arena[freeSlab].data;
-                if (proxy.tryClaim(objectSize)) {
+                slabType& slab = slabs.arena[freeSlab];
+                if (proxy.tryClaim(&slab, objectSize)) {
                     return freeSlab;
                 } else {
                     freeSlab = popFreeList();
