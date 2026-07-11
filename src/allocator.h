@@ -754,33 +754,43 @@ class SimpleAllocator {
                 } // outer if
             } // for
         } // end of getReuse
-        
+
         __host__ __device__
-        void* alloc(){
-            SlabAddrType slabAddr = popPartialList();
-            bool fresh = false;
-            if (slabAddr == NULL_ADDR) {
-                slabAddr = slabAllocator.alloc(objectSize);
-                fresh = true;
-            }
-
-            if(slabAddr == SlabAllocatorType::NULL_ADDR) {
-                return nullptr;
-            }
-
+        void* allocObject(SlabAddrType slabAddr, bool& slabFilled){
             SlabType& slab = slabAllocator.slabAt(slabAddr);
             SlabProxyType& slabProxy = slabAllocator.proxyAt(slabAddr).data;
 
-            bool slabFilled = false;
             void* result = slabProxy.alloc(&slab, slabFilled);
 
-            if (fresh) {
-                pushPartialList(slabAddr);
+            return result;
+        }
+
+        __host__ __device__
+        void* alloc(){
+            SlabAddrType slabAddr = intr::atomic::load_acquire(&partialListHead);
+            bool slabFilled = false;
+            void* result = nullptr;
+
+            // Check if partial list is empty
+            // Loop if other thread filled slab at partialListHead
+            // before this one could
+            while (slabAddr != NULL_ADDR && result == nullptr) {
+                printf("Partial slab found\n");
+                result = allocObject(slabAddr, slabFilled);
+                slabAddr = intr::atomic::load_acquire(&partialListHead);
             }
 
-            if (slabFilled) {
-                removeFromPartialList(slabAddr);
+            // Use free list if partial list is empty
+            if (result == nullptr) {
+                slabAddr = slabAllocator.alloc(objectSize);
+                if(slabAddr == NULL_ADDR)
+                    return nullptr;
+                pushPartialList(slabAddr);
+                result = allocObject(slabAddr, slabFilled);
             }
+
+            if (slabFilled)
+                removeFromPartialList(slabAddr);
 
             return result;
         } // end of alloc
