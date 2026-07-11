@@ -232,33 +232,38 @@ public:
 
 
 // what each worker thread does
+// set objSize to 0 for random objSize from 8 to 512 bytes
 template<typename SIZE_TYPE>
-void workerThread(TestSlabArena& arena, ParallelTracker<SIZE_TYPE>& tracker, 
-                 uint16_t threadId, size_t iterations, 
-                 std::atomic<bool>& shouldStop) {
+void workerThread(TestSlabArena& arena, ParallelTracker<SIZE_TYPE>& tracker,
+                  uint16_t threadId, size_t iterations,
+                  std::atomic<bool>& shouldStop, size_t objSize = 0) {
     
     std::random_device rd;
     std::mt19937 gen(rd() ^ threadId);
     std::uniform_int_distribution<> sizeDist(3, 9);
-    std::uniform_int_distribution<> actionDist(0, 100);
+    std::uniform_int_distribution<> actionDist(0, 99);
     std::uniform_int_distribution<> holdDist(0, 50);
     
-    std::vector<std::pair<void*, size_t>> localAllocations;
+    std::vector<std::pair<void*, size_t>> localAllocations; // {objPtr, objSize}
     localAllocations.reserve(100);
     
     size_t localAllocs = 0, localFrees = 0;
     size_t localAllocatorFails = 0, localTrackerFails = 0;
-    size_t localDataCorruption = 0, localFreeFails = 0;    
+    size_t localDataCorruption = 0, localFreeFails = 0;
+
+    if (objSize == 0)
+        objSize = 1 << sizeDist(gen);
+
+    TestAllocator allocator(arena, objSize);
 
     for (size_t i = 0; i < iterations && !shouldStop.load(); i++) {
         int action = actionDist(gen);
+
+        Log() << "Iteration " << i + 1 << ":" << std::endl;
         
         // 70% chance to alloc, 30% chance to free
-        if (action < 55 || localAllocations.empty()) {
+        if (action < 100 || localAllocations.empty()) {
             // try alloc
-            size_t objSize = 1 << sizeDist(gen);
-            TestAllocator allocator(arena, objSize);
-            
             void* ptr = allocator.alloc();
             if (ptr) {
                 if (tracker.recordAllocation(ptr, objSize, threadId, arena)) {
@@ -273,8 +278,7 @@ void workerThread(TestSlabArena& arena, ParallelTracker<SIZE_TYPE>& tracker,
                 } else {
                     // tracker failed, free it back right away
                     Log() << ":( - Failed to record allocation of size " << objSize << " at " << ptr << std::endl;
-                    TestAllocator freeAllocator(arena, objSize);
-                    freeAllocator.free(ptr);
+                    allocator.free(ptr);
                     localTrackerFails++;
                 }
             } else {
@@ -298,11 +302,10 @@ void workerThread(TestSlabArena& arena, ParallelTracker<SIZE_TYPE>& tracker,
                     uint32_t* intPtr = static_cast<uint32_t*>(ptr);
                     if ((*intPtr >> 16) != threadId) {
                         localDataCorruption++;
-                        std::cout << ":( - Thread " << threadId << ": data corruption detected!" << std::endl;
+                        Log() << ":( - Thread " << threadId << ": data corruption detected!" << std::endl;
                     }
                 }
                 
-                TestAllocator allocator(arena, objSize);
                 if (allocator.free(ptr)) {
                     if (tracker.recordFree(ptr, threadId, arena)) {
                         localFrees++;
@@ -327,19 +330,26 @@ void workerThread(TestSlabArena& arena, ParallelTracker<SIZE_TYPE>& tracker,
     }
     
     // free whatever’s left
+    Log() << "Freeing:" << std::endl;
     for (const auto& alloc : localAllocations) {
-        TestAllocator allocator(arena, alloc.second);
         if (allocator.free(alloc.first)) {
-            tracker.recordFree(alloc.first, threadId, arena);
+            if (tracker.recordFree(alloc.first, threadId, arena)) {
+                localFrees++;
+            } else {
+                localTrackerFails++;
+                Log() << ":( - Failed to record deallocation of size " << objSize << " at " << alloc.first << std::endl;
+            }
+        } else {
+            localFreeFails++;
         }
     }
     
-    std::cout << "Thread " << threadId << " done: " 
-              << localAllocs << " allocs, " << localFrees << " frees, " 
-              << localAllocatorFails << " alloc_fails, "
-              << localTrackerFails << " tracker_fails, "
-              << localDataCorruption << " corruptions, "
-              << localFreeFails << " free_fails" << std::endl;
+    Log() << "Thread " << threadId << " done: "
+          << localAllocs << " allocs, " << localFrees << " frees, "
+          << localAllocatorFails << " alloc_fails, "
+          << localTrackerFails << " tracker_fails, "
+          << localDataCorruption << " corruptions, "
+          << localFreeFails << " free_fails" << std::endl;
 }
 
 void testBasicParallel() {
@@ -366,8 +376,8 @@ void testBasicParallel() {
     // spin up threads
     for (size_t i = 0; i < numThreads; i++) {
         threads.emplace_back(workerThread<SizeType>, std::ref(arena), std::ref(tracker),
-                            static_cast<uint16_t>(i + 1), iterationsPerThread, 
-                            std::ref(shouldStop));
+                             static_cast<uint16_t>(i + 1), iterationsPerThread,
+                             std::ref(shouldStop), static_cast<size_t>(0));
     }
     
     // wait for them
@@ -423,8 +433,8 @@ void testHighContentionParallel() {
     // spin up more threads than cores
     for (size_t i = 0; i < numThreads; i++) {
         threads.emplace_back(workerThread<SizeType>, std::ref(arena), std::ref(tracker),
-                            static_cast<uint16_t>(i + 1), iterationsPerThread, 
-                            std::ref(shouldStop));
+                             static_cast<uint16_t>(i + 1), iterationsPerThread,
+                             std::ref(shouldStop), static_cast<size_t>(0));
     }
     
     // let it run a bit then stop
@@ -485,8 +495,8 @@ void testStressTest() {
         
         for (size_t i = 0; i < numThreads; i++) {
             threads.emplace_back(workerThread<SizeType>, std::ref(arena), std::ref(tracker),
-                                static_cast<uint16_t>(i + 1), iterationsPerThread, 
-                                std::ref(shouldStop));
+                                 static_cast<uint16_t>(i + 1), iterationsPerThread,
+                                 std::ref(shouldStop), static_cast<size_t>(0));
         }
         
         for (auto& thread : threads) {
