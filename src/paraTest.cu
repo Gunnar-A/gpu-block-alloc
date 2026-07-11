@@ -54,7 +54,6 @@ public:
 
 
     void logRefusalAtTotal (size_t total) {
-
         size_t expected = intr::atomic::load_relaxed(&minimumRefusalTotal);
         while (expected > total) {
             size_t old = intr::atomic::CAS_system(&minimumRefusalTotal, expected, total);
@@ -99,7 +98,7 @@ public:
         
         // find mask overhead
         size_t maskElemCount = (maxObj + proxy.SLAB_ELEM_BIT_SIZE - 1) / proxy.SLAB_ELEM_BIT_SIZE;
-        size_t maskOverhead = maskElemCount * sizeof(typename TestSlabArena::slabProxyType::allocMaskElem);
+        size_t maskOverhead = (maskElemCount > 1) ? maskElemCount * sizeof(typename TestSlabArena::slabProxyType::allocMaskElem) : 0;
 
         if(offset < maskOverhead)
             return MAX_TRACKED_OBJECTS;
