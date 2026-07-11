@@ -456,7 +456,8 @@ class SlabArena {
                 SlabAddrType next = proxies.arena[current].next;
                 SlabAddrType old;
                 if (local) {
-                    ;
+                    old = current;
+                    head = next;
                 } else {
                     old = intr::atomic::CAS_acq_rel(&head, current, next);
                 }
