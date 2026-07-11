@@ -255,7 +255,7 @@ struct defaultSlabProxy {
             }
             from_slab_mask = true;
         } else {
-            // multi mask elements  
+            // multi mask elements
             for(size_t i = 0; i < maskElemCount; i++){
                 if(tryAllocateBit(slab->data[i], bitIndex)){
                     bitAllocated = true;
@@ -420,7 +420,7 @@ class SlabArena {
     public:
         __host__ __device__
         SlabArena() {
-            intr::atomic::store_relaxed(&freeListHead, NULL_ADDR);
+            intr::atomic::store_relaxed(&freeListHead, 0ull);
             intr::atomic::store_relaxed(&nextSearch, static_cast<size_t>(0));
             
             for(size_t i = 0; i < SLAB_COUNT; i++){

@@ -644,7 +644,6 @@ void runComparisonTest() {
 
 
 int main() {
-
     #ifndef GPU_ONLY
         runComparisonTest();  // Skip CPU comparison
     #endif
