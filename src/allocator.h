@@ -786,7 +786,7 @@ class SimpleAllocator {
 
         __host__ __device__
         bool free(void* ptr){
-            if(!ptr)
+            if (!isValidPtr(ptr))
                 return false;
 
             SlabAddrType slabAddr = slabAllocator.slabIndexFor(ptr);
@@ -799,6 +799,7 @@ class SimpleAllocator {
 
             if (slabEmptied) {
                 removeFromPartialList(slabAddr);
+                slabAllocator.free(slabAddr);
             }
 
             return true;
