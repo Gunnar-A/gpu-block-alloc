@@ -157,7 +157,7 @@ struct defaultSlabProxy {
             return maxObjects;
         
         size_t maskElem = (maxObjects + SLAB_ELEM_BIT_SIZE - 1) / SLAB_ELEM_BIT_SIZE; // -> 2
-        size_t maskOverhead = maskElem * sizeof(allocMaskElem); // 2 * 8 -> 16
+        size_t maskOverhead = (maskElem > 1) ? maskElem * sizeof(allocMaskElem) : 0; // 2 * 8 -> 16
 
         if(maskOverhead >= SLAB_SIZE)
             return 0;
