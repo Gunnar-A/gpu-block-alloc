@@ -139,9 +139,7 @@ public:
         if (globalInd >= MAX_TRACKED_OBJECTS) {
             Log() << "GLOBAL INDEX OF OBJECT PAST BOUNDS" << std::endl;
             return MAX_TRACKED_OBJECTS;
-        }
-        else {
-            Log() << "getIndexForPointer SUCCEEDED" << std::endl;
+        } else {
             return globalInd;
         }
     }
@@ -258,11 +256,13 @@ void workerThread(TestSlabArena& arena, ParallelTracker<SIZE_TYPE>& tracker,
     for (size_t i = 0; i < iterations && !shouldStop.load(); i++) {
         int action = actionDist(gen);
 
-        Log() << "Iteration " << i + 1 << ":" << std::endl;
+        Log() << "Thread " << threadId << " Iteration " << i + 1 << ":" << std::endl;
         
         // 70% chance to alloc, 30% chance to free
-        if (action < 100 || localAllocations.empty()) {
+        if (action < 70 || localAllocations.empty()) {
             // try alloc
+            Log() << "Thread " << threadId << " alloc..." << std::endl;
+            
             void* ptr = allocator.alloc();
             if (ptr) {
                 if (tracker.recordAllocation(ptr, objSize, threadId, arena)) {
@@ -286,10 +286,13 @@ void workerThread(TestSlabArena& arena, ParallelTracker<SIZE_TYPE>& tracker,
                 float proportion = ((float)total) / (ParallelTracker<SIZE_TYPE>::MAX_TRACKED_OBJECTS*8.0f);
                 Log() << ":( - Failed to allocate object of size " << objSize << " with "
                       << (100.0*(1.0-proportion)) << "% capacity left"<<  std::endl;
+                localAllocatorFails++;
             }
         } else {
             // pick a random alloc and free it
             if (!localAllocations.empty()) {
+                Log() << "Thread " << threadId << " free..." << std::endl;
+                
                 std::uniform_int_distribution<> indexDist(0, localAllocations.size() - 1);
                 size_t index = indexDist(gen);
                 
@@ -591,8 +594,8 @@ int main() {
         // testBasicParallel();
         // testHighContentionParallel();
         // testStressTest();
-        const size_t objSizes[] = {64};
-        customTest(static_cast<size_t>(1), static_cast<size_t>(10), objSizes);
+        const size_t objSizes[] = {64, 128};
+        customTest(static_cast<size_t>(2), static_cast<size_t>(1000), objSizes);
         
         std::cout << "All tests done!" << std::endl;
         
