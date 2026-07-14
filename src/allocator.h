@@ -600,6 +600,8 @@ class SlabArena {
                     freeSlab = popFreeList();
                 }
             }
+
+            printf("I got here\n");
             
             return NULL_ADDR;
         } // end of alloc
