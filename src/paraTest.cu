@@ -304,6 +304,7 @@ void workerThread(TestSlabArena& arena, ParallelTracker<SIZE_TYPE>& tracker,
                     uint32_t* intPtr = static_cast<uint32_t*>(ptr);
                     if ((*intPtr >> 16) != threadId) {
                         localDataCorruption++;
+                        tracker.logReservationFailure();
                         Log() << ":( - Thread " << threadId << ": data corruption detected!" << std::endl;
                     }
                 }
@@ -595,7 +596,7 @@ int main() {
         // testHighContentionParallel();
         // testStressTest();
         const size_t objSizes[] = {64, 128};
-        customTest(static_cast<size_t>(2), static_cast<size_t>(1000), objSizes);
+        customTest(static_cast<size_t>(2), static_cast<size_t>(10000), objSizes);
         
         std::cout << "All tests done!" << std::endl;
         
