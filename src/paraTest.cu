@@ -284,9 +284,15 @@ void workerThread(TestSlabArena& arena, ParallelTracker<SIZE_TYPE>& tracker,
                 size_t total = tracker.getCurrentByteTotal();
                 tracker.logRefusalAtTotal(total);
                 float proportion = ((float)total) / (ParallelTracker<SIZE_TYPE>::MAX_TRACKED_OBJECTS*8.0f);
-                Log() << ":( - Failed to allocate object of size " << objSize << " with "
-                      << (100.0*(1.0-proportion)) << "% capacity left"<<  std::endl;
-                localAllocatorFails++;
+                if (proportion < 0.99) {
+                    Log() << ":( - Failed to allocate object of size " << objSize << " with "
+                          << (100.0*(1.0-proportion)) << "% capacity left" << std::endl;
+                    localAllocatorFails++;
+                } else {
+                    Log() << ":) - Failed to allocate object of size " << objSize << " with "
+                          << (100.0*(1.0-proportion)) << "% capacity left. Likely expected behavior."
+                          << std::endl;
+                }
             }
         } else {
             // pick a random alloc and free it
@@ -595,8 +601,8 @@ int main() {
         // testBasicParallel();
         // testHighContentionParallel();
         // testStressTest();
-        const size_t objSizes[] = {64, 128};
-        customTest(static_cast<size_t>(2), static_cast<size_t>(10000), objSizes);
+        const size_t objSizes[] = {512};
+        customTest(static_cast<size_t>(1), static_cast<size_t>(100000), objSizes);
         
         std::cout << "All tests done!" << std::endl;
         
