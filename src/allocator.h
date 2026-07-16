@@ -297,7 +297,7 @@ struct defaultSlabProxy {
     } // end of alloc
 
     __host__ __device__
-    bool free(SLAB_TYPE* slab, void* objPtr, bool& slabEmptied){
+    bool free(SLAB_TYPE* slab, void* objPtr, bool& slabEmptied, bool& slabWasFull){
         if(!objPtr)
             return false;
         
@@ -352,9 +352,11 @@ struct defaultSlabProxy {
 
         // decrement count after clearing bit
         AllocState prev = intr::atomic::add_acq_rel(&allocState, ((AllocState)0) - ((AllocState)1));
-        AllocState newCount = (prev & COUNT_MASK) - 1;
+        AllocState prevCount = (prev & COUNT_MASK);
+        AllocState newCount = prevCount - 1;
         
         slabEmptied = (newCount == 0);
+        slabWasFull = (prevCount == maxObjCount);
         if(!slabEmptied) {
             uint32_t state = intr::atomic::load_acquire(&reservationState);
             if(state == FULL) 
@@ -601,7 +603,7 @@ class SlabArena {
                 }
             }
 
-            printf("I got here\n");
+            printf("No free slabs in free list\n");
             
             return NULL_ADDR;
         } // end of alloc
@@ -807,12 +809,16 @@ class SimpleAllocator {
             SlabProxyType& slabProxy = slabAllocator.proxyAt(slabAddr).data;
 
             bool slabEmptied = false;
-            if(!slabProxy.free(&slab, ptr, slabEmptied))
+            bool slabWasFull = false;
+            if(!slabProxy.free(&slab, ptr, slabEmptied, slabWasFull))
                 return false;
 
             if (slabEmptied) {
+                printf("Slab emptied\n");
                 removeFromPartialList(slabAddr);
                 slabAllocator.free(slabAddr);
+            } else if (slabWasFull) {
+                pushPartialList(slabAddr);
             }
 
             return true;
