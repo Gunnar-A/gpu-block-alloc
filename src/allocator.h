@@ -597,6 +597,22 @@ class SlabArena {
         }
 
         __host__ __device__
+        void markPrev(SlabAddrType nodeInd) {
+            proxyNodeType& node = proxies.arena[nodeInd];
+            while (true) {
+                LinkType link1 = node.prev;
+
+                if (link1.getFlag() == true)
+                    break;
+
+                LinkType old = intr::atomic::CAS_acq_rel(&node.prev, link1,
+                                                       LinkType{link1.getIndex(), true});
+                if (old == link1)
+                    break;
+            }
+        }
+
+        __host__ __device__
         void removeFromList(SlabAddrType &head, SlabAddrType slabInd){
             if(slabInd >= SLAB_COUNT)
                 return;
