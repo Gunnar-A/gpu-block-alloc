@@ -402,11 +402,15 @@ class Link {
         return (raw & ~INDEX_MASK) >> OFFSET;
     }
 
-    IndexType getIndex() const    { return intr::atomic::load_acquire(data) & INDEX_MASK; }
+    bool operator==(const Link<IndexType> &other) const {
+        return (data == other.data);
+    }
 
-    bool getFlag() const          { return (intr::atomic::load_acquire(data) & ~INDEX_MASK) >> OFFSET; }
+    IndexType getIndex() const    { return intr::atomic::load_acquire(&data) & INDEX_MASK; }
 
-    std::uintptr_t getRaw() const { return intr::atomic::load_acquire(data); }
+    bool getFlag() const          { return (intr::atomic::load_acquire(&data) & ~INDEX_MASK) >> OFFSET; }
+
+    std::uintptr_t getRaw() const { return intr::atomic::load_acquire(&data); }
 }
 
 
@@ -439,6 +443,7 @@ class SlabArena {
         typedef SLAB_TYPE slabType;
         typedef SLAB_PROXY_TYPE<SLAB_TYPE> slabProxyType;
         typedef Node<slabProxyType, SlabAddrType, Size<2>> proxyNodeType;
+        typedef Link<SlabAddrType> LinkType
 
         static const size_t SLAB_COUNT = (ARENA_SIZE::VALUE + SLAB_TYPE::SIZE - 1) / SLAB_TYPE::SIZE;
         static const SlabAddrType NULL_ADDR = static_cast<SlabAddrType>(-1);
@@ -510,8 +515,8 @@ class SlabArena {
             SlabAddrType nextInd = intr::atomic::load_acquire(&head);
 
             while (true) {
-                proxies.arena[slabInd].next = Link<SlabAddrType>{nextInd};
-                proxies.arena[slabInd].prev = NULL_ADDR;
+                node.next = LinkType{nextInd};
+                node.prev = NULL_ADDR;
 
                 SlabAddrType old = intr::atomic::CAS_acq_rel(&head, nextInd, slabInd);
                 if (old == nextInd)
@@ -525,15 +530,16 @@ class SlabArena {
 
         __host__ __device__
         void pushCommon(SlabAddrType nodeInd, SlabAddrType nextInd) {
-            proxyNodeType& node = proxies.arena[slabInd];
+            proxyNodeType& node = proxies.arena[nodeInd];
             proxyNodeType& next = proxies.arena[nextInd];
             while (true) {
-                SlabAddrType link1 = next.prev.getRaw();
-                if (Link<SlabAddrType>::getFlagFromRaw(link1) == true || node.next.getRaw() != nextInd)
+                LinkType link1 = next.prev;
+                if (link1.getFlag() == true || node.next != LinkType{nextInd})
                     break;
-                SlabAddrType old = intr::atomic::CAS_acq_rel(&next.prev.data, link1, nodeInd);
+
+                LinkType old = intr::atomic::CAS_acq_rel(&next.prev, link1, LinkType{nodeInd});
                 if (old == link1) {
-                    if (node.prev.getFlag == true)
+                    if (node.prev.getFlag() == true)
                         helpInsert(nodeInd, nextInd);
                     break;
                 }
@@ -541,52 +547,53 @@ class SlabArena {
         }
 
         __host__ __device__
-        SlabAddrType helpInsert(SlabAddrType prevInd, SlabAddrType nodeInd) {
+        void helpInsert(SlabAddrType prevInd, SlabAddrType nodeInd) {
             proxyNodeType& node = proxies.arena[nodeInd];
-            SlabAddrType last = NULL_ADDR;
+            SlabAddrType lastInd = NULL_ADDR;
             while (true) {
                 proxyNodeType& prev = proxies.arena[prevInd];
-                SlabAddrType prev2Ind = prev.next.getRaw();
-                if (Link<SlabAddrType>::getFlagFromRaw(prev2Ind) == true)
-                    prev2Ind = NULL_ADDR;
+                SlabAddrType prev2Ind;
+                if (prev.next.getFlag() == true)
+                    prev2Ind = LinkType{NULL_ADDR};
+                else
+                    prev2Ind = prev.next.getIndex();
 
                 if (prev2Ind == NULL_ADDR) {
-                    if (last != NULL_ADDR) {
-                        markPrev(prev);
-                        SlabAddrType next2Ind = prev.next.getRaw();
-                        SlabAddrType old = intr::atomic::CAS_acq_rel(&last.next.data, prevInd,
-                                                                     next2 & Link<SlabAddrType>::INDEXMASK);
-                        prevInd = last;
-                        last = NULL_ADDR;
+                    if (lastInd != NULL_ADDR) {
+                        markPrev(prevInd);
+
+                        proxyNodeType& last = proxies.arena[lastInd];
+                        SlabAddrType next2Ind = prev.next.getIndex();
+                        intr::atomic::CAS_acq_rel(&last.next, LinkType{prevInd}, LinkType{next2Ind});
+
+                        prevInd = lastInd;
+                        lastInd = NULL_ADDR;
                     } else {
-                        prev = prev.prev.getRaw();
+                        prevInd = prev.prev.getPointer();
                     }
                     continue;
                 }
 
-                SlabAddrType link1 = node.prev.getRaw();
+                LinkType link1 = node.prev;
 
-                if (Link<SlabAddrType>::getFlagFromRaw(link1) == true)
+                if (link1.getFlag() == true)
                     break;
 
                 if (prev2Ind != nodeInd) {
-                    last = prevInd;
+                    lastInd = prevInd;
                     prevInd = prev2Ind;
                     continue;
                 }
 
-                if (Link<SlabAddrType>::getPointerFromRaw(link1) == prevInd)
+                if (link1.getIndex() == prevInd)
                     break;
 
                 if (prev.next.getRaw() == nodeInd) {
-                    SlabAddrType old = intr::atomic::CAS_acq_rel(&node.prev.data, link1,
-                                                                 prevInd & Link<SlabAddrType>::INDEXMASK);
+                    LinkType old = intr::atomic::CAS_acq_rel(&node.prev, link1, LinkType{prevInd});
                     if (old == link1 && prev.prev.getFlag() == false)
                         break
                 }
             }
-
-            return prev;
         }
 
         __host__ __device__
