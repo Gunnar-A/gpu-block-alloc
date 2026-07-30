@@ -370,6 +370,12 @@ struct defaultSlabProxy {
 
 
 
+template <typename IndexType>
+struct List {
+    public:
+    IndexType head;
+}
+
 // node class
 template <typename Type, typename IndexType, typename SizeType>
 class Node{
@@ -455,14 +461,14 @@ class SlabArena {
         BackingArenaType slabs;
         ProxyArenaType proxies;
         
-        SlabAddrType freeListHead; // Might need to reconsider approach to head
+        List<SlabAddrType> freeList;
                                    // (put in proxy arena as node?)
         size_t nextSearch;
 
     public:
         __host__ __device__
         SlabArena() {
-            intr::atomic::store_relaxed(&freeListHead, 0ull);
+            intr::atomic::store_relaxed(&freeList.head, 0ull);
             intr::atomic::store_relaxed(&nextSearch, static_cast<size_t>(0));
             
             for(size_t i = 0; i < SLAB_COUNT; i++){
@@ -694,17 +700,17 @@ class SlabArena {
 
         __host__ __device__
         SlabAddrType popFreeList(){
-            return popList(freeListHead);
+            return popList(freeList.head);
         } // end of pop
 
         __host__ __device__
         void pushFreeList(SlabAddrType slabInd){
-            pushList(freeListHead,slabInd);
+            pushList(freeList.head,slabInd);
         } // end of push
 
         __host__ __device__
         void removeFromFreeList(SlabAddrType slabInd){
-            removeFromList(freeListHead,slabInd);
+            removeFromList(freeList.head,slabInd);
         } // end
 
         __host__ __device__
@@ -797,7 +803,7 @@ class SlabArena {
             emptyReusables = 0;
             freeSlabs = 0;
 
-            SlabAddrType current = intr::atomic::load_acquire(&freeListHead);
+            SlabAddrType current = intr::atomic::load_acquire(&freeList.head);
             while (current != NULL_ADDR) {
                 freeSlabs++;
                 current = proxies.arena[current].next;
@@ -818,7 +824,7 @@ class SlabArena {
         __host__ __device__
         bool validateFreeList() {
             size_t count = 0;
-            SlabAddrType current = intr::atomic::load_acquire(&freeListHead);
+            SlabAddrType current = intr::atomic::load_acquire(&freeList.head);
             SlabAddrType prev = NULL_ADDR;
             
             while (current != NULL_ADDR && count < SLAB_COUNT) {
@@ -855,22 +861,22 @@ class SimpleAllocator {
     private:
         SlabAllocatorType& slabAllocator;
         size_t objectSize;
-        SlabAddrType partialListHead;
+        List<SlabAddrType> partialList;
 
 
         __host__ __device__
         SlabAddrType popPartialList(){
-            return slabAllocator.popList(partialListHead);
+            return slabAllocator.popList(partialList.head);
         } // end of pop
 
         __host__ __device__
         void pushPartialList(SlabAddrType slabInd){
-            slabAllocator.pushList(partialListHead,slabInd);
+            slabAllocator.pushList(partialList.head,slabInd);
         } // end of push
 
         __host__ __device__
         void removeFromPartialList(SlabAddrType slabInd){
-            slabAllocator.removeFromList(partialListHead,slabInd);
+            slabAllocator.removeFromList(partialList.head,slabInd);
         } // end
 
 
@@ -879,7 +885,7 @@ class SimpleAllocator {
         SimpleAllocator(SlabAllocatorType& slabAlloc, size_t objSize)
             : slabAllocator(slabAlloc)
             , objectSize(objSize == 0 ? 1 : objSize)
-            , partialListHead(NULL_ADDR)
+            , partialList.head(NULL_ADDR)
         {}
 
 
@@ -941,17 +947,17 @@ class SimpleAllocator {
 
         __host__ __device__
         void* alloc(){
-            SlabAddrType slabAddr = intr::atomic::load_acquire(&partialListHead);
+            SlabAddrType slabAddr = intr::atomic::load_acquire(&partialList.head);
             bool slabFilled = false;
             void* result = nullptr;
 
             // Check if partial list is empty
-            // Loop if other thread filled slab at partialListHead
+            // Loop if other thread filled slab at partialList.head
             // before this one could
             while (slabAddr != NULL_ADDR && result == nullptr) {
                 printf("Partial slab found\n");
                 result = allocObject(slabAddr, slabFilled);
-                slabAddr = intr::atomic::load_acquire(&partialListHead);
+                slabAddr = intr::atomic::load_acquire(&partialList.head);
             }
 
             // Use free list if partial list is empty
