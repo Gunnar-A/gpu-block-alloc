@@ -544,14 +544,71 @@ class SlabArena {
         }
 
         __host__ __device__
+        void helpDelete(SlabAddrType nodeInd) {
+            markPrev(nodeInd);
+            SlabAddrType lastInd = NULL_ADDR;
+
+            proxyNodeType& node = proxies.arena[nodeInd];
+            SlabAddrType prevInd = node.prev.getIndex();
+            SlabAddrType nextInd = node.next.getIndex();
+
+            while (true) {
+                if (prevInd == nextInd)
+                    break;
+
+                if (next.next.getFlag() == true) {
+                    markPrev(nextInd);
+                    nextInd = next.next.getPointer();
+                    continue
+                }
+
+                LinkType prev2Link = prev.next;
+                SlabAddrType prev2Ind;
+                if (prev2Link.getFlag() == true)
+                    prev2Ind = NULL_ADDR;
+                else
+                    prev2Ind = prev.next.getIndex();
+
+                if (prev2Ind == NULL_ADDR) {
+                    if (lastInd == NULL_ADDR) {
+                        markPrev(prev);
+
+                        SlabAddrType next2Ind = prev.next.getIndex();
+
+                        proxyNodeType& last = proxies.arena[lastInd];
+                        intr::atomic::CAS_acq_rel(&last.next, LinkType{prevInd}, LinkType{next2Ind});
+
+                        prevInd = lastInd;
+                        lastInd = NULL_ADDR;
+                    } else {
+                        prevInd = prev.prev.getPointer();
+                    }
+                    continue;
+                }
+
+                if (prev2Ind != nodeInd) {
+                    lastInd = prevInd;
+                    prevInd = prev2Ind;
+                    continue;
+                }
+
+                LinkType nodeLink{nodeInd};
+                LinkType old = intr::atomic::CAS_acq_rel(&prev.next, nodeLink, LinkType{nextInd});
+                if (old == nodeLink)
+                    break;
+            }
+        }
+
+        __host__ __device__
         void helpInsert(SlabAddrType prevInd, SlabAddrType nodeInd) {
             proxyNodeType& node = proxies.arena[nodeInd];
             SlabAddrType lastInd = NULL_ADDR;
             while (true) {
                 proxyNodeType& prev = proxies.arena[prevInd];
+                LinkType prev2Link = prev.next;
                 SlabAddrType prev2Ind;
-                if (prev.next.getFlag() == true)
-                    prev2Ind = LinkType{NULL_ADDR};
+                if (prev2Link.getFlag() == true)
+                    prev2Ind = NULL_ADDR;
                 else
                     prev2Ind = prev.next.getIndex();
 
