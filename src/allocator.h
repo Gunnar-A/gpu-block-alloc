@@ -513,7 +513,7 @@ class SlabArena {
 
             while (true) {
                 node.next = LinkType{nextInd};
-                node.prev = NULL_ADDR;
+                node.prev = LinkType{NULL_ADDR};
 
                 SlabAddrType old = intr::atomic::CAS_acq_rel(&head, nextInd, slabInd);
                 if (old == nextInd)
@@ -562,6 +562,7 @@ class SlabArena {
                     continue
                 }
 
+                proxyNodeType& prev = proxies.arena[prevInd];
                 LinkType prev2Link = prev.next;
                 SlabAddrType prev2Ind;
                 if (prev2Link.getFlag() == true)
@@ -600,7 +601,7 @@ class SlabArena {
         }
 
         __host__ __device__
-        void helpInsert(SlabAddrType prevInd, SlabAddrType nodeInd) {
+        SlabAddrType helpInsert(SlabAddrType prevInd, SlabAddrType nodeInd) {
             proxyNodeType& node = proxies.arena[nodeInd];
             SlabAddrType lastInd = NULL_ADDR;
             while (true) {
@@ -649,6 +650,8 @@ class SlabArena {
                         break
                 }
             }
+
+            return prev;
         }
 
         __host__ __device__
@@ -672,24 +675,20 @@ class SlabArena {
             if(slabInd >= SLAB_COUNT)
                 return;
 
-            SlabAddrType prev = proxies.arena[slabInd].prev;
-            SlabAddrType next = proxies.arena[slabInd].next;
-
-            // updates prevs next
-            if(prev != NULL_ADDR){
-                proxies.arena[prev].next = next;
-            } else {
-                // it was the head!
-                SlabAddrType expected = slabInd;
-                intr::atomic::CAS_acq_rel(&head, expected, next);
+            proxyNodeType& node = proxies.arena[slabInd];
+            while (true) {
+                LinkType link1 = node.next;
+                if (link1.getFlag() == true)
+                    return;
+                LinkType old = intr::atomic::CAS_acq_rel(&node.next, link1,
+                                                         LinkType{link1.getIndex(), true});
+                if (old == link1) {
+                    helpDelete(slabInd);
+                    SlabAddrType prevInd = node.prev.getIndex();
+                    helpInsert(prevInd, link1.getIndex());
+                    return;
+                }
             }
-            // update nexts prev
-            if(next != NULL_ADDR)
-                proxies.arena[next].prev = prev;
-            
-            
-            proxies.arena[slabInd].next = NULL_ADDR;
-            proxies.arena[slabInd].prev = NULL_ADDR;
         } // end
 
 
