@@ -443,7 +443,7 @@ class SlabArena {
         typedef SLAB_TYPE slabType;
         typedef SLAB_PROXY_TYPE<SLAB_TYPE> slabProxyType;
         typedef Node<slabProxyType, SlabAddrType, Size<2>> proxyNodeType;
-        typedef Link<SlabAddrType> LinkType
+        typedef Link<SlabAddrType> LinkType;
 
         static const size_t SLAB_COUNT = (ARENA_SIZE::VALUE + SLAB_TYPE::SIZE - 1) / SLAB_TYPE::SIZE;
         static const SlabAddrType NULL_ADDR = static_cast<SlabAddrType>(-1);
@@ -455,7 +455,8 @@ class SlabArena {
         BackingArenaType slabs;
         ProxyArenaType proxies;
         
-        SlabAddrType freeListHead;
+        SlabAddrType freeListHead; // Might need to reconsider approach to head
+                                   // (put in proxy arena as node?)
         size_t nextSearch;
 
     public:
@@ -473,36 +474,32 @@ class SlabArena {
                 proxies.arena[i].next = (i == SLAB_COUNT - 1) ? NULL_ADDR : static_cast<SlabAddrType>(i + 1);
                 proxies.arena[i].prev = (i == 0) ? NULL_ADDR : static_cast<SlabAddrType>(i - 1);
             }
-        } 
+        }
 
 
         __host__ __device__
-        SlabAddrType popList(SlabAddrType &head, bool local=false){
-            SlabAddrType current;
-            if (local) {
-                current = head;
-            } else {
-                current = intr::atomic::load_acquire(&head);
-            }
+        SlabAddrType popList(SlabAddrType &head){
+            while (true) {
+                SlabAddrType currentInd = intr::atomic::load_acquire(&head);
 
-            while(current != NULL_ADDR){
-                SlabAddrType next = proxies.arena[current].next;
-                SlabAddrType old;
-                if (local) {
-                    old = current;
-                    head = next;
-                } else {
-                    old = intr::atomic::CAS_acq_rel(&head, current, next);
-                }
-                if(old == current){
-                    proxies.arena[current].next = NULL_ADDR;
-                    proxies.arena[current].prev = NULL_ADDR;
-                    return current;
-                }
-                current = old;
-            }
+                if (currentInd == NULL_ADDR)
+                    return NULL_ADDR;
 
-            return NULL_ADDR;
+                proxyNodeType& current = proxies.arena[currentInd];
+
+                LinkType nextLink = current.next;
+                if (nextLink.getFlag() == true) {
+                    helpDelete(currentInd);
+                    continue;
+                }
+
+                LinkType old = intr::atomic::CAS_acq_rel(&current.next, nextLink, LinkType{nextLink.getIndex()}, true);
+                if(old == nextLink){
+                    helpDelete(currentInd);
+                    // helpInsert(...);
+                    return currentInd;
+                }
+            }
         } // end of pop
 
         __host__ __device__
@@ -562,8 +559,9 @@ class SlabArena {
                     if (lastInd != NULL_ADDR) {
                         markPrev(prevInd);
 
-                        proxyNodeType& last = proxies.arena[lastInd];
                         SlabAddrType next2Ind = prev.next.getIndex();
+
+                        proxyNodeType& last = proxies.arena[lastInd];
                         intr::atomic::CAS_acq_rel(&last.next, LinkType{prevInd}, LinkType{next2Ind});
 
                         prevInd = lastInd;
