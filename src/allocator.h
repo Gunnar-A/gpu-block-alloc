@@ -944,7 +944,7 @@ class SimpleAllocator {
         SimpleAllocator(SlabAllocatorType& slabAlloc, size_t objSize)
             : slabAllocator(slabAlloc)
             , objectSize(objSize == 0 ? 1 : objSize)
-            , partialList.head(NULL_ADDR)
+            , partialList{NULL_ADDR}
         {}
 
 
