@@ -488,8 +488,8 @@ class SlabArena {
                 intr::atomic::store_relaxed(&proxies.arena[i].data.reservationState, static_cast<uint32_t>(slabProxyType::FREE));
 
                 // build list
-                proxies.arena[i].next = (i == SLAB_COUNT - 1) ? NULL_ADDR : static_cast<SlabAddrType>(i + 1);
-                proxies.arena[i].prev = (i == 0) ? NULL_ADDR : static_cast<SlabAddrType>(i - 1);
+                proxies.arena[i].next = (i == SLAB_COUNT - 1) ? LinkType{NULL_IND, false} : LinkType{i + 1, false};
+                proxies.arena[i].prev = (i == 0) ? LinkType{NULL_IND, false} : LinkType{i - 1, false};
             }
         }
 
