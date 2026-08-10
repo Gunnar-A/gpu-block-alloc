@@ -454,8 +454,8 @@ class SlabArena {
 
         static const size_t SLAB_COUNT = (ARENA_SIZE::VALUE + SLAB_TYPE::SIZE - 1) / SLAB_TYPE::SIZE;
         static const SlabAddrType NULL_ADDR = static_cast<SlabAddrType>(-1);
-        static const SlabAddrType NULL_IND = NULL_ADDR & ~(static_cast<SlabAddrType>(1)
-                                                           << (sizeof(SlabAddrType) * 8 - 1));
+        static const SlabAddrType NULL_IND = ~(static_cast<SlabAddrType>(1)
+                                               << (sizeof(SlabAddrType) * 8 - 1));
 
         typedef DirectArena<slabType, SlabAddrType, Size<SLAB_COUNT>> BackingArenaType;
         typedef DirectArena<proxyNodeType, SlabAddrType, Size<SLAB_COUNT>> ProxyArenaType;
@@ -499,7 +499,7 @@ class SlabArena {
 
                 // Ensure deletion is completed and retry if the node is marked
                 if (nextLink.getFlag() == true) {
-                    helpDelete(currentInd);
+                    helpDelete(head, currentInd);
                     continue;
                 }
 
@@ -510,7 +510,8 @@ class SlabArena {
                 if(old == nextLinkRaw){
                     // Set deletion mark of prev link
                     // and update next index of `prev`
-                    helpDelete(currentInd);
+                    helpDelete(head, currentInd);
+                    printf("head is now %llu\n", head);
 
                     // update prev index of `next`
                     SlabAddrType nextInd = current.next.getIndex();
@@ -542,6 +543,7 @@ class SlabArena {
             };
 
             pushCommon(head, slabInd, nextInd);
+            printf("head is now %llu\n", head);
         } // end of push
 
         __host__ __device__
@@ -566,7 +568,7 @@ class SlabArena {
         // Sets deletion mark of prev link
         // then updates next index of previous node
         __host__ __device__
-        void helpDelete(SlabAddrType nodeInd) {
+        void helpDelete(SlabAddrType &head, SlabAddrType nodeInd) {
             // Set deletion mark of prev link
             markPrev(nodeInd);
 
@@ -577,10 +579,6 @@ class SlabArena {
 
             // Loop to update next index of `prev`
             while (true) {
-                // Abort if `node` is the head
-                if (prevInd == NULL_IND)
-                    break;
-
                 proxyNodeType& next = proxies.arena[nextInd];
 
                 // Ensure `next` is not marked
@@ -590,30 +588,33 @@ class SlabArena {
                     continue;
                 }
 
+                // GARBAGE IF prevInd == NULL_IND
                 proxyNodeType& prev = proxies.arena[prevInd];
-                LinkType prev2Link = prev.next;
+
                 SlabAddrType prev2Ind;
-                if (prev2Link.getFlag() == true)
-                    prev2Ind = NULL_IND;
-                else
+                if (prevInd == NULL_IND)
+                    prev2Ind = intr::atomic::load_acquire(&head);
+                else {
+                    LinkType prev2Link = prev.next;
                     prev2Ind = prev.next.getIndex();
 
-                // Ensure `prev` is not marked
-                if (prev2Ind == NULL_IND) {
-                    if (lastInd != NULL_IND) {
-                        markPrev(prevInd);
+                    // Ensure `prev` is not marked
+                    if (prev2Link.getFlag() == true) {
+                        if (lastInd != NULL_IND) {
+                            markPrev(prevInd);
 
-                        SlabAddrType next2Ind = prev.next.getIndex();
+                            SlabAddrType next2Ind = prev.next.getIndex();
 
-                        proxyNodeType& last = proxies.arena[lastInd];
-                        intr::atomic::CAS_acq_rel(&last.next.data, prevInd, next2Ind);
+                            proxyNodeType& last = proxies.arena[lastInd];
+                            intr::atomic::CAS_acq_rel(&last.next.data, prevInd, next2Ind);
 
-                        prevInd = lastInd;
-                        lastInd = NULL_IND;
-                    } else {
-                        prevInd = prev.prev.getIndex();
+                            prevInd = lastInd;
+                            lastInd = NULL_IND;
+                        } else {
+                            prevInd = prev.prev.getIndex();
+                        }
+                        continue;
                     }
-                    continue;
                 }
 
                 // Ensure `prev` is the previous node of `node`
@@ -624,7 +625,12 @@ class SlabArena {
                 }
 
                 // Update next index of `prev` with CAS
-                SlabAddrType old = intr::atomic::CAS_acq_rel(&prev.next.data, nodeInd, nextInd);
+                SlabAddrType old;
+                if (prevInd == NULL_IND)
+                    old = intr::atomic::CAS_acq_rel(&head, nodeInd, nextInd);
+                else
+                    old = intr::atomic::CAS_acq_rel(&prev.next.data, nodeInd, nextInd);
+
                 if (old == nodeInd)
                     break;
             }
@@ -649,13 +655,10 @@ class SlabArena {
                     prev2Ind = intr::atomic::load_acquire(&head);
                 } else {
                     LinkType prev2Link = prev.next;
-                    if (prev2Link.getFlag() == true)
-                        prev2Ind = NULL_IND;
-                    else
-                        prev2Ind = prev.next.getIndex();
+                    prev2Ind = prev.next.getIndex();
 
                     // Ensure `prev` is not marked
-                    if (prev2Ind == NULL_IND) {
+                    if (prev2Link.getFlag() == true) {
                         if (lastInd != NULL_IND) {
                             markPrev(prevInd);
 
@@ -743,7 +746,7 @@ class SlabArena {
                 SlabAddrType old = intr::atomic::CAS_acq_rel(&node.next.data, link1Raw,
                                                              LinkType::makeMarkedRaw(link1.getIndex()));
                 if (old == link1Raw) {
-                    helpDelete(slabInd);
+                    helpDelete(head, slabInd);
                     SlabAddrType prevInd = node.prev.getIndex();
                     helpInsert(head, prevInd, link1.getIndex());
                     break;
@@ -1047,6 +1050,7 @@ class SimpleAllocator {
                 printf("Slab emptied\n");
                 removeFromPartialList(slabAddr);
                 slabAllocator.free(slabAddr);
+                printf("partialList.head is now %llu\n", partialList.head);
             } else if (slabWasFull) {
                 pushPartialList(slabAddr);
             }
