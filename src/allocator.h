@@ -388,17 +388,8 @@ class Link {
     Link(IndexType i, bool d)
         : data((static_cast<IndexType>(d) << OFFSET) | (i & INDEX_MASK)) {}
 
-    // Purely for atomic operation support
     __host__ __device__
-    Link()
-        : data(static_cast<IndexType>(0)) {}
-
-    __host__ __device__
-    explicit Link(unsigned long long raw)
-        : data(static_cast<IndexType>(raw)) {}
-
-    __host__ __device__
-    explicit operator unsigned long long() const { return data; }
+    static IndexType makeMarkedRaw(const IndexType raw) { return raw || (static_cast<IndexType>(1) << OFFSET); }
 
     __host__ __device__
     bool operator==(const Link<IndexType> &other) const { return (data == other.data); }
@@ -426,7 +417,7 @@ class Node{
 
         __host__ __device__
         Node()
-            : next(AdrInfo<IndexType>::null()), prev(AdrInfo<IndexType>::null()) {}
+            : next(AdrInfo<IndexType>::null(), false), prev(AdrInfo<IndexType>::null(), false) {}
 }; // end of Node
 
 
@@ -513,9 +504,10 @@ class SlabArena {
                 }
 
                 // Set deletion mark of next link
-                LinkType old = intr::atomic::CAS_acq_rel(&current.next, nextLink,
-                                                         LinkType{nextLink.getIndex(), true});
-                if(old == nextLink){
+                SlabAddrType nextLinkRaw = nextLink.getRaw();
+                SlabAddrType old = intr::atomic::CAS_acq_rel(&current.next.data, nextLinkRaw,
+                                                             LinkType::makeMarkedRaw(nextLink.getIndex()));
+                if(old == nextLinkRaw){
                     // Set deletion mark of prev link
                     // and update next index of `prev`
                     helpDelete(currentInd);
@@ -561,8 +553,9 @@ class SlabArena {
                 if (link1.getFlag() == true || node.next != LinkType{nextInd, false})
                     break;
 
-                LinkType old = intr::atomic::CAS_acq_rel(&next.prev, link1, LinkType{nodeInd, false});
-                if (old == link1) {
+                SlabAddrType link1Raw = link1.getRaw();
+                SlabAddrType old = intr::atomic::CAS_acq_rel(&next.prev.data, link1Raw, nodeInd);
+                if (old == link1Raw) {
                     if (node.prev.getFlag() == true)
                         helpInsert(head, nodeInd, nextInd);
                     break;
@@ -613,7 +606,7 @@ class SlabArena {
                         SlabAddrType next2Ind = prev.next.getIndex();
 
                         proxyNodeType& last = proxies.arena[lastInd];
-                        intr::atomic::CAS_acq_rel(&last.next, LinkType{prevInd, false}, LinkType{next2Ind, false});
+                        intr::atomic::CAS_acq_rel(&last.next.data, prevInd, next2Ind);
 
                         prevInd = lastInd;
                         lastInd = NULL_IND;
@@ -631,9 +624,8 @@ class SlabArena {
                 }
 
                 // Update next index of `prev` with CAS
-                LinkType nodeLink{nodeInd};
-                LinkType old = intr::atomic::CAS_acq_rel(&prev.next, nodeLink, LinkType{nextInd, false});
-                if (old == nodeLink)
+                SlabAddrType old = intr::atomic::CAS_acq_rel(&prev.next.data, nodeInd, nextInd);
+                if (old == nodeInd)
                     break;
             }
         }
@@ -670,7 +662,7 @@ class SlabArena {
                             SlabAddrType next2Ind = prev.next.getIndex();
 
                             proxyNodeType& last = proxies.arena[lastInd];
-                            intr::atomic::CAS_acq_rel(&last.next, LinkType{prevInd, false}, LinkType{next2Ind, false});
+                            intr::atomic::CAS_acq_rel(&last.next.data, prevInd, next2Ind);
 
                             prevInd = lastInd;
                             lastInd = NULL_IND;
@@ -701,17 +693,18 @@ class SlabArena {
                 // Revalidate that `prev` is the predecessor
                 bool prevIsPredecessor;
                 if (prevInd == NULL_IND)
-                    prevIsPredecessor intr::atomic::load_acquire(&head) == nodeInd;
+                    prevIsPredecessor = intr::atomic::load_acquire(&head) == nodeInd;
                 else
                     prevIsPredecessor = prev.next.getRaw() == nodeInd;
 
                 if (prevIsPredecessor) {
                     // Update prev index of `node` with CAS
-                    LinkType old = intr::atomic::CAS_acq_rel(&node.prev, link1, LinkType{prevInd, false});
+                    SlabAddrType link1Raw = link1.getRaw();
+                    SlabAddrType old = intr::atomic::CAS_acq_rel(&node.prev.data, link1Raw, prevInd);
                     // Check deletion mark of `prev.prev`
                     // to ensure `prev` was not deleted concurrently
                     // (not entirely necessary, but the benefit is well worth the extra check)
-                    if (old == link1 && (prevInd == NULL_IND || prev.prev.getFlag() == false))
+                    if (old == link1Raw && (prevInd == NULL_IND || prev.prev.getFlag() == false))
                         break;
                 }
             }
@@ -728,9 +721,10 @@ class SlabArena {
                 if (link1.getFlag() == true)
                     break;
 
-                LinkType old = intr::atomic::CAS_acq_rel(&node.prev, link1,
-                                                       LinkType{link1.getIndex(), true});
-                if (old == link1)
+                SlabAddrType link1Raw = link1.getRaw();
+                SlabAddrType old = intr::atomic::CAS_acq_rel(&node.prev.data, link1Raw,
+                                                             LinkType::makeMarkedRaw(link1.getIndex()));
+                if (old == link1Raw)
                     break;
             }
         }
@@ -744,14 +738,15 @@ class SlabArena {
             while (true) {
                 LinkType link1 = node.next;
                 if (link1.getFlag() == true)
-                    return;
-                LinkType old = intr::atomic::CAS_acq_rel(&node.next, link1,
-                                                         LinkType{link1.getIndex(), true});
-                if (old == link1) {
+                    break;
+                SlabAddrType link1Raw = link1.getRaw();
+                SlabAddrType old = intr::atomic::CAS_acq_rel(&node.next.data, link1Raw,
+                                                             LinkType::makeMarkedRaw(link1.getIndex()));
+                if (old == link1Raw) {
                     helpDelete(slabInd);
                     SlabAddrType prevInd = node.prev.getIndex();
                     helpInsert(head, prevInd, link1.getIndex());
-                    return;
+                    break;
                 }
             }
         } // end
