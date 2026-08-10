@@ -389,7 +389,7 @@ class Link {
         : data((static_cast<IndexType>(d) << OFFSET) | (i & INDEX_MASK)) {}
 
     __host__ __device__
-    static IndexType makeMarkedRaw(const IndexType raw) { return raw || (static_cast<IndexType>(1) << OFFSET); }
+    static IndexType makeMarkedRaw(const IndexType raw) { return raw | (static_cast<IndexType>(1) << OFFSET); }
 
     __host__ __device__
     bool operator==(const Link<IndexType> &other) const { return (data == other.data); }
