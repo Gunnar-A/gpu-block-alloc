@@ -453,7 +453,6 @@ class SlabArena {
         typedef Link<SlabAddrType> LinkType;
 
         static const size_t SLAB_COUNT = (ARENA_SIZE::VALUE + SLAB_TYPE::SIZE - 1) / SLAB_TYPE::SIZE;
-        static const SlabAddrType NULL_ADDR = static_cast<SlabAddrType>(-1);
         static const SlabAddrType NULL_IND = ~(static_cast<SlabAddrType>(1)
                                                << (sizeof(SlabAddrType) * 8 - 1));
 
@@ -491,8 +490,8 @@ class SlabArena {
                 SlabAddrType currentInd = intr::atomic::load_acquire(&head);
 
                 // Stop if the list is empty
-                if (currentInd == NULL_ADDR)
-                    return NULL_ADDR;
+                if (currentInd == NULL_IND)
+                    return NULL_IND;
 
                 proxyNodeType& current = proxies.arena[currentInd];
                 LinkType nextLink = current.next;
@@ -511,7 +510,6 @@ class SlabArena {
                     // Set deletion mark of prev link
                     // and update next index of `prev`
                     helpDelete(head, currentInd);
-                    printf("head is now %llu\n", head);
 
                     // update prev index of `next`
                     SlabAddrType nextInd = current.next.getIndex();
@@ -543,7 +541,6 @@ class SlabArena {
             };
 
             pushCommon(head, slabInd, nextInd);
-            printf("head is now %llu\n", head);
         } // end of push
 
         __host__ __device__
@@ -757,12 +754,15 @@ class SlabArena {
 
         __host__ __device__
         SlabAddrType popFreeList(){
-            return popList(freeList.head);
+            SlabAddrType popped = popList(freeList.head);
+            printf("Free list head is %llu after pop\n", freeList.head);
+            return popped;
         } // end of pop
 
         __host__ __device__
         void pushFreeList(SlabAddrType slabInd){
             pushList(freeList.head,slabInd);
+            printf("Free list head is %llu after push\n", freeList.head);
         } // end of push
 
         __host__ __device__
@@ -826,7 +826,7 @@ class SlabArena {
             // try free slab from the free list
             SlabAddrType freeSlab = popFreeList();
 
-            while (freeSlab != NULL_ADDR) {
+            while (freeSlab != NULL_IND) {
                 slabProxyType& proxy = proxies.arena[freeSlab].data;
                 slabType& slab = slabs.arena[freeSlab];
                 if (proxy.tryClaim(&slab, objectSize)) {
@@ -838,7 +838,7 @@ class SlabArena {
 
             printf("No free slabs in free list\n");
             
-            return NULL_ADDR;
+            return NULL_IND;
         } // end of alloc
         
 
@@ -861,7 +861,7 @@ class SlabArena {
             freeSlabs = 0;
 
             SlabAddrType current = intr::atomic::load_acquire(&freeList.head);
-            while (current != NULL_ADDR) {
+            while (current != NULL_IND) {
                 freeSlabs++;
                 current = proxies.arena[current].next;
             }
@@ -882,9 +882,9 @@ class SlabArena {
         bool validateFreeList() {
             size_t count = 0;
             SlabAddrType current = intr::atomic::load_acquire(&freeList.head);
-            SlabAddrType prev = NULL_ADDR;
+            SlabAddrType prev = NULL_IND;
             
-            while (current != NULL_ADDR && count < SLAB_COUNT) {
+            while (current != NULL_IND && count < SLAB_COUNT) {
                 // check that prev
                 if (proxies.arena[current].prev != prev) {
                     return false;
@@ -912,7 +912,7 @@ class SimpleAllocator {
         typedef typename SlabAllocatorType::slabType SlabType;
         typedef typename SlabAllocatorType::SlabAddrType SlabAddrType;
         typedef typename SlabAllocatorType::slabProxyType SlabProxyType;
-        static const SlabAddrType NULL_ADDR = SlabAllocatorType::NULL_ADDR;
+        static const SlabAddrType NULL_IND = SlabAllocatorType::NULL_IND;
         static const size_t SLAB_COUNT = SlabAllocatorType::SLAB_COUNT;
 
     private:
@@ -929,11 +929,13 @@ class SimpleAllocator {
         __host__ __device__
         void pushPartialList(SlabAddrType slabInd){
             slabAllocator.pushList(partialList.head,slabInd);
+            printf("Partial list head is %llu after push\n", partialList.head);
         } // end of push
 
         __host__ __device__
         void removeFromPartialList(SlabAddrType slabInd){
             slabAllocator.removeFromList(partialList.head,slabInd);
+            printf("Partial list head is %llu after remove\n", partialList.head);
         } // end
 
 
@@ -942,7 +944,7 @@ class SimpleAllocator {
         SimpleAllocator(SlabAllocatorType& slabAlloc, size_t objSize)
             : slabAllocator(slabAlloc)
             , objectSize(objSize == 0 ? 1 : objSize)
-            , partialList{NULL_ADDR}
+            , partialList{NULL_IND}
         {}
 
 
@@ -1011,7 +1013,7 @@ class SimpleAllocator {
             // Check if partial list is empty
             // Loop if other thread filled slab at partialList.head
             // before this one could
-            while (slabAddr != NULL_ADDR && result == nullptr) {
+            while (slabAddr != NULL_IND && result == nullptr) {
                 printf("Partial slab found\n");
                 result = allocObject(slabAddr, slabFilled);
                 slabAddr = intr::atomic::load_acquire(&partialList.head);
@@ -1020,7 +1022,7 @@ class SimpleAllocator {
             // Use free list if partial list is empty
             if (result == nullptr) {
                 slabAddr = slabAllocator.alloc(objectSize);
-                if(slabAddr == NULL_ADDR)
+                if(slabAddr == NULL_IND)
                     return nullptr;
                 pushPartialList(slabAddr);
                 result = allocObject(slabAddr, slabFilled);
@@ -1050,7 +1052,6 @@ class SimpleAllocator {
                 printf("Slab emptied\n");
                 removeFromPartialList(slabAddr);
                 slabAllocator.free(slabAddr);
-                printf("partialList.head is now %llu\n", partialList.head);
             } else if (slabWasFull) {
                 pushPartialList(slabAddr);
             }
