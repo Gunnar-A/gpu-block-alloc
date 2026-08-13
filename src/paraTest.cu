@@ -19,12 +19,13 @@ public:
 
 private:
     std::unique_ptr<uint32_t[]> trackingArena;
-    size_t currentByteTotal    = 0;
-    size_t minimumRefusalTotal = MAX_TRACKED_OBJECTS * 8;
-    size_t totalAllocations    = 0;
-    size_t totalFrees          = 0;
-    size_t totalFailures       = 0;
-    size_t reservationFailures = 0;
+    size_t currentByteTotal     = 0;
+    size_t minimumRefusalTotal  = MAX_TRACKED_OBJECTS * 8;
+    size_t totalAllocations     = 0;
+    size_t totalFrees           = 0;
+    size_t totalAllocFailures   = 0;
+    size_t totalTrackerFailures = 0;
+    size_t reservationFailures  = 0;
 
     
 public:
@@ -36,17 +37,22 @@ public:
         for (size_t i = 0; i < MAX_TRACKED_OBJECTS; ++i) {
             intr::atomic::store_relaxed(&trackingArena[i], 0u);
         }
-        intr::atomic::store_relaxed(&totalAllocations,    static_cast<size_t>(0));
-        intr::atomic::store_relaxed(&totalFrees,          static_cast<size_t>(0));
-        intr::atomic::store_relaxed(&totalFailures,       static_cast<size_t>(0));
-        intr::atomic::store_relaxed(&reservationFailures, static_cast<size_t>(0));
-        intr::atomic::store_relaxed(&currentByteTotal,    static_cast<size_t>(0));
+        intr::atomic::store_relaxed(&totalAllocations,     static_cast<size_t>(0));
+        intr::atomic::store_relaxed(&totalFrees,           static_cast<size_t>(0));
+        intr::atomic::store_relaxed(&totalAllocFailures,   static_cast<size_t>(0));
+        intr::atomic::store_relaxed(&totalTrackerFailures, static_cast<size_t>(0));
+        intr::atomic::store_relaxed(&reservationFailures,  static_cast<size_t>(0));
+        intr::atomic::store_relaxed(&currentByteTotal,     static_cast<size_t>(0));
     }
 
 
 
     size_t getCurrentByteTotal () {
         return intr::atomic::load_relaxed(&currentByteTotal);
+    }
+
+    void logAllocFailure () {
+        intr::atomic::add_system(&totalAllocFailures, size_t{1});
     }
 
     void logReservationFailure () {
@@ -167,7 +173,7 @@ public:
         uint32_t bad_id   = old & 0xFFFF;
         Log() << ":( - Failed to allocate size " << size
               << ". Expected 0, but found (" << bad_size << "," << bad_id << ")" << std::endl;
-        intr::atomic::add_system(&totalFailures, size_t{1});
+        intr::atomic::add_system(&totalTrackerFailures, size_t{1});
         return false;
     }
 
@@ -181,7 +187,7 @@ public:
         
         // check if it was really allocated by this thread
         if ((current & 0xFFFF) != threadId || current == 0) {
-            intr::atomic::add_system(&totalFailures, size_t{1});
+            intr::atomic::add_system(&totalTrackerFailures, size_t{1});
             return false;
         }
 
@@ -194,16 +200,17 @@ public:
         }
         
         // CAS failed (raced)...tracker failure
-        intr::atomic::add_system(&totalFailures, size_t{1});
+        intr::atomic::add_system(&totalTrackerFailures, size_t{1});
         return false;
     } // end of recordFree
  
     
     // dump stats
-    void getStats(size_t& allocs, size_t& frees, size_t& failures, size_t& leaks, size_t& reservationFails) {
+    void getStats(size_t& allocs, size_t& frees, size_t& allocFailures, size_t& trackerFailures, size_t& leaks, size_t& reservationFails) {
         allocs = intr::atomic::load_relaxed(&totalAllocations);
         frees  = intr::atomic::load_relaxed(&totalFrees);
-        failures = intr::atomic::load_relaxed(&totalFailures);
+        allocFailures  = intr::atomic::load_relaxed(&totalAllocFailures);
+        trackerFailures = intr::atomic::load_relaxed(&totalTrackerFailures);
         reservationFails = intr::atomic::load_relaxed(&reservationFailures);
 
         leaks = 0;
@@ -217,7 +224,8 @@ public:
     void reset() {
         intr::atomic::store_relaxed(&totalAllocations, size_t(0));
         intr::atomic::store_relaxed(&totalFrees, size_t(0));
-        intr::atomic::store_relaxed(&totalFailures, size_t(0));
+        intr::atomic::store_relaxed(&totalAllocFailures, size_t(0));
+        intr::atomic::store_relaxed(&totalTrackerFailures, size_t(0));
         intr::atomic::store_relaxed(&reservationFailures, size_t(0));
         intr::atomic::store_relaxed(&currentByteTotal, size_t(0));
         intr::atomic::store_relaxed(&minimumRefusalTotal, MAX_TRACKED_OBJECTS * 8);
@@ -288,6 +296,7 @@ void workerThread(TestSlabArena& arena, ParallelTracker<SIZE_TYPE>& tracker,
                     Log() << ":( - Failed to allocate object of size " << objSize << " with "
                           << (100.0*(1.0-proportion)) << "% capacity left" << std::endl;
                     localAllocatorFails++;
+                    tracker.logAllocFailure();
                 } else {
                     Log() << ":) - Failed to allocate object of size " << objSize << " with "
                           << (100.0*(1.0-proportion)) << "% capacity left. Likely expected behavior."
@@ -398,18 +407,20 @@ void testBasicParallel() {
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     
     // print stats
-    size_t totalAllocs, totalFrees, totalFailures, totalLeaks, reservationFailures;
-    tracker.getStats(totalAllocs, totalFrees, totalFailures, totalLeaks, reservationFailures);
-    
+    size_t totalAllocs, totalFrees, totalAllocFailures, totalTrackerFailures, totalLeaks, reservationFailures;
+    tracker.getStats(totalAllocs, totalFrees, totalAllocFailures, totalTrackerFailures, totalLeaks, reservationFailures);
+
     std::cout << "\nResults:" << std::endl;
     std::cout << "Duration: " << duration.count() << "ms" << std::endl;
     std::cout << "Allocs: " << totalAllocs << std::endl;
     std::cout << "Frees: " << totalFrees << std::endl;
-    std::cout << "Tracking Failures: " << totalFailures << std::endl;
+    std::cout << "Allocation Failures: " << totalAllocFailures << std::endl;
+    std::cout << "Tracking Failures: " << totalTrackerFailures << std::endl;
     std::cout << "Reservation failures: " << reservationFailures << std::endl;
     std::cout << "Leaks: " << totalLeaks << std::endl;
-    std::cout << "Success rate: " << (100.0 * (totalAllocs + totalFrees)) / 
-                                      (totalAllocs + totalFrees + totalFailures + reservationFailures) << "%" << std::endl;
+    std::cout << "Success rate: " << (100.0 * (totalAllocs + totalFrees)) /
+                                     (totalAllocs + totalFrees + totalAllocFailures + totalTrackerFailures + reservationFailures)
+              << "%" << std::endl;
     
     if (totalLeaks == 0) {
         std::cout << ":) no leaks" << std::endl;
@@ -457,15 +468,16 @@ void testHighContentionParallel() {
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     
-    size_t totalAllocs, totalFrees, totalFailures, totalLeaks, reservationFailures;
-    tracker.getStats(totalAllocs, totalFrees, totalFailures, totalLeaks, reservationFailures);
+    size_t totalAllocs, totalFrees, totalAllocFailures, totalTrackerFailures, totalLeaks, reservationFailures;
+    tracker.getStats(totalAllocs, totalFrees, totalAllocFailures, totalTrackerFailures, totalLeaks, reservationFailures);
     
     std::cout << "\nResults:" << std::endl;
     std::cout << "Threads: " << numThreads << std::endl;
     std::cout << "Duration: " << duration.count() << "ms" << std::endl;
     std::cout << "Allocs: " << totalAllocs << std::endl;
     std::cout << "Frees: " << totalFrees << std::endl;
-    std::cout << "Tracking failures: " << totalFailures << std::endl;
+    std::cout << "Allocation failures: " << totalAllocFailures << std::endl;
+    std::cout << "Tracking failures: " << totalTrackerFailures << std::endl;
     std::cout << "Reservation failures: " << reservationFailures << std::endl;
     std::cout << "Leaks: " << totalLeaks << std::endl;
     std::cout << "Throughput: " << (totalAllocs + totalFrees) * 1000 / duration.count() 
@@ -515,12 +527,12 @@ void testStressTest() {
         auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
         
-        size_t totalAllocs, totalFrees, totalFailures, totalLeaks, reservationFailures;
-        tracker.getStats(totalAllocs, totalFrees, totalFailures, totalLeaks, reservationFailures);
+        size_t totalAllocs, totalFrees, totalAllocFailures, totalTrackerFailures, totalLeaks, reservationFailures;
+        tracker.getStats(totalAllocs, totalFrees, totalAllocFailures, totalTrackerFailures, totalLeaks, reservationFailures);
         
         std::cout << "  Round " << (round + 1) << ": " << duration.count() << "ms, "
-                  << totalAllocs << " allocs, " << totalFrees << " frees, "
-                  << totalFailures << " tracking fails, " << reservationFailures << " res fails, "
+                  << totalAllocs << " allocs, " << totalFrees << " frees, " << totalAllocFailures << "allocation fails, "
+                  << totalTrackerFailures << " tracking fails, " << reservationFailures << " res fails, "
                   << totalLeaks << " leaks" << std::endl;
     }
     
@@ -541,8 +553,7 @@ void customTest(const size_t numThreads, const size_t iterationsPerThread, const
     TestSlabArena &arena = *arena_ptr;
     constexpr size_t MAX_OBJECT_COUNT = TestSlabArena::SLAB_COUNT * TestSlabArena::slabType::SIZE / 8;
     typedef Size<MAX_OBJECT_COUNT> SizeType;
-    ParallelTracker<SizeType> *tracker_ptr = new ParallelTracker<SizeType>;
-    ParallelTracker<SizeType> &tracker = *tracker_ptr;
+    ParallelTracker<SizeType> tracker;
 
     std::atomic<bool> shouldStop{false};
     std::vector<std::thread> threads;
@@ -565,18 +576,20 @@ void customTest(const size_t numThreads, const size_t iterationsPerThread, const
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
     // print stats
-    size_t totalAllocs, totalFrees, totalFailures, totalLeaks, reservationFailures;
-    tracker.getStats(totalAllocs, totalFrees, totalFailures, totalLeaks, reservationFailures);
+    size_t totalAllocs, totalFrees, totalAllocFailures, totalTrackerFailures, totalLeaks, reservationFailures;
+    tracker.getStats(totalAllocs, totalFrees, totalAllocFailures, totalTrackerFailures, totalLeaks, reservationFailures);
 
     std::cout << "\nResults:" << std::endl;
     std::cout << "Duration: " << duration.count() << "ms" << std::endl;
     std::cout << "Allocs: " << totalAllocs << std::endl;
     std::cout << "Frees: " << totalFrees << std::endl;
-    std::cout << "Tracking Failures: " << totalFailures << std::endl;
+    std::cout << "Allocation Failures: " << totalAllocFailures << std::endl;
+    std::cout << "Tracking Failures: " << totalTrackerFailures << std::endl;
     std::cout << "Reservation failures: " << reservationFailures << std::endl;
     std::cout << "Leaks: " << totalLeaks << std::endl;
     std::cout << "Success rate: " << (100.0 * (totalAllocs + totalFrees)) /
-                                      (totalAllocs + totalFrees + totalFailures + reservationFailures) << "%" << std::endl;
+        (totalAllocs + totalFrees + totalAllocFailures + totalTrackerFailures + reservationFailures)
+              << "%" << std::endl;
 
     if (totalLeaks == 0) {
         std::cout << ":) no leaks" << std::endl;
@@ -601,8 +614,8 @@ int main() {
         // testBasicParallel();
         // testHighContentionParallel();
         // testStressTest();
-        const size_t objSizes[] = {512};
-        customTest(static_cast<size_t>(1), static_cast<size_t>(100000), objSizes);
+        const size_t objSizes[] = {256, 256, 256, 256};
+        customTest(static_cast<size_t>(4), static_cast<size_t>(10000), objSizes);
         
         std::cout << "All tests done!" << std::endl;
         
