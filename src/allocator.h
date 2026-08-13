@@ -513,7 +513,8 @@ class SlabArena {
 
                     // update prev index of `next`
                     SlabAddrType nextInd = current.next.getIndex();
-                    helpInsert(head, NULL_IND, nextInd);
+                    if (nextInd != NULL_IND)
+                        helpInsert(head, NULL_IND, nextInd);
 
                     return currentInd;
                 }
@@ -744,8 +745,12 @@ class SlabArena {
                                                              LinkType::makeMarkedRaw(link1.getIndex()));
                 if (old == link1Raw) {
                     helpDelete(head, slabInd);
+
                     SlabAddrType prevInd = node.prev.getIndex();
-                    helpInsert(head, prevInd, link1.getIndex());
+                    SlabAddrType link1Ind = link1.getIndex();
+                    if (link1Ind != NULL_IND)
+                        helpInsert(head, prevInd, link1Ind);
+
                     break;
                 }
             }
