@@ -884,28 +884,85 @@ class SlabArena {
         } // end of getStats
 
         __host__ __device__
-        bool validateFreeList() {
+        bool validateFreeList(SlabAddrType &head) {
             size_t count = 0;
-            SlabAddrType current = intr::atomic::load_acquire(&freeList.head);
-            SlabAddrType prev = NULL_IND;
+            SlabAddrType currentInd = intr::atomic::load_acquire(&head);
+            SlabAddrType prevInd = NULL_IND;
             
-            while (current != NULL_IND && count < SLAB_COUNT) {
+            while (currentInd != NULL_IND && count < SLAB_COUNT) {
+                proxyNodeType& current = proxies.arena[currentInd];
+
+                // check prev mark
+                if (current.prev.getFlag() == true) {
+                    printf("INVALID: prev is marked\n");
+                    return false;
+                }
+
+                // check next mark
+                if (current.next.getFlag() == true) {
+                    printf("INVALID: next is marked\n");
+                    return false;
+                }
+
                 // check that prev
-                if (proxies.arena[current].prev != prev) {
+                if (current.prev.getIndex() != prevInd) {
+                    printf("INVALID: prev is not updated\n");
                     return false;
                 }
-                
+
                 // check slab is free
-                if (proxies.arena[current].data.getSize() != 0) {
+                if (current.data.getSize() != 0) {
+                    printf("INVALID: slab isn't free\n");
                     return false;
                 }
-                
-                prev = current;
-                current = proxies.arena[current].next;
+
+                prevInd = currentInd;
+                currentInd = current.next.getIndex();
                 count++;
             }
+
+            return count < SLAB_COUNT;
+        }
+
+        __host__ __device__
+        bool validatePartialList(SlabAddrType &head) {
+            size_t count = 0;
+            SlabAddrType currentInd = intr::atomic::load_acquire(&head);
+            SlabAddrType prevInd = NULL_IND;
             
-            return count < SLAB_COUNT; 
+            while (currentInd != NULL_IND && count < SLAB_COUNT) {
+                proxyNodeType& current = proxies.arena[currentInd];
+
+                // check prev mark
+                if (current.prev.getFlag() == true) {
+                    printf("INVALID: prev is marked\n");
+                    return false;
+                }
+
+                // check next mark
+                if (current.next.getFlag() == true) {
+                    printf("INVALID: next is marked\n");
+                    return false;
+                }
+
+                // check that prev
+                if (current.prev.getIndex() != prevInd) {
+                    printf("INVALID: prev is not updated\n");
+                    return false;
+                }
+
+                // check slab is partial
+                if (current.data.isAvailable() == 0) {
+                    printf("INVALID: slab is partial\n");
+                    return false;
+                }
+
+                prevInd = currentInd;
+                currentInd = current.next.getIndex();
+                count++;
+            }
+
+            return count < SLAB_COUNT;
         }
 }; // end of SlabArena
 
@@ -934,12 +991,14 @@ class SimpleAllocator {
         __host__ __device__
         void pushPartialList(SlabAddrType slabInd){
             slabAllocator.pushList(partialList.head,slabInd);
+            slabAllocator.validatePartialList(partialList.head);
             printf("Partial list head is %llu after push\n", partialList.head);
         } // end of push
 
         __host__ __device__
         void removeFromPartialList(SlabAddrType slabInd){
             slabAllocator.removeFromList(partialList.head,slabInd);
+            slabAllocator.validatePartialList(partialList.head);
             printf("Partial list head is %llu after remove\n", partialList.head);
         } // end
 
