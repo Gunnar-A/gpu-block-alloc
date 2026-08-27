@@ -382,14 +382,16 @@ class Link {
     IndexType data;
 
     static const int OFFSET = sizeof(IndexType) * 8 - 1;
-    static const IndexType INDEX_MASK = ~(static_cast<IndexType>(1) << OFFSET);
+    static const IndexType INDEX_MASK = (static_cast<IndexType>(1) << OFFSET) - 1;
 
     __host__ __device__
     Link(IndexType i, bool d)
         : data((static_cast<IndexType>(d) << OFFSET) | (i & INDEX_MASK)) {}
 
     __host__ __device__
-    static IndexType makeMarkedRaw(const IndexType raw) { return raw | (static_cast<IndexType>(1) << OFFSET); }
+    static IndexType makeMarkedRaw(const IndexType raw) {
+        return raw | (static_cast<IndexType>(1) << OFFSET);
+    }
 
     __host__ __device__
     bool operator==(const Link<IndexType> &other) const { return (data == other.data); }
@@ -401,10 +403,10 @@ class Link {
     IndexType getIndex() const { return intr::atomic::load_acquire(&data) & INDEX_MASK; }
 
     __host__ __device__
-    bool getFlag() const { return (intr::atomic::load_acquire(&data) & ~INDEX_MASK) >> OFFSET; }
+    bool getFlag() const { return intr::atomic::load_acquire(&data) >> OFFSET; }
 
     __host__ __device__
-    std::uintptr_t getRaw() const { return intr::atomic::load_acquire(&data); }
+    IndexType getRaw() const { return intr::atomic::load_acquire(&data); }
 };
 
 // node class
@@ -453,8 +455,7 @@ class SlabArena {
         typedef Link<SlabAddrType> LinkType;
 
         static const size_t SLAB_COUNT = (ARENA_SIZE::VALUE + SLAB_TYPE::SIZE - 1) / SLAB_TYPE::SIZE;
-        static const SlabAddrType NULL_IND = ~(static_cast<SlabAddrType>(1)
-                                               << (sizeof(SlabAddrType) * 8 - 1));
+        static const SlabAddrType NULL_IND = LinkType::INDEX_MASK;
 
         typedef DirectArena<slabType, SlabAddrType, Size<SLAB_COUNT>> BackingArenaType;
         typedef DirectArena<proxyNodeType, SlabAddrType, Size<SLAB_COUNT>> ProxyArenaType;
@@ -505,7 +506,7 @@ class SlabArena {
                 // Set deletion mark of next link
                 SlabAddrType nextLinkRaw = nextLink.getRaw();
                 SlabAddrType old = intr::atomic::CAS_acq_rel(&current.next.data, nextLinkRaw,
-                                                             LinkType::makeMarkedRaw(nextLink.getIndex()));
+                                                             LinkType::makeMarkedRaw(nextLinkRaw));
                 if(old == nextLinkRaw){
                     // Set deletion mark of prev link
                     // and update next index of `prev`
@@ -527,12 +528,12 @@ class SlabArena {
                 return;
 
             proxyNodeType& node = proxies.arena[slabInd];
+            node.prev = LinkType{NULL_IND, false};
 
             SlabAddrType nextInd = intr::atomic::load_acquire(&head);
 
             while (true) {
                 node.next = LinkType{nextInd, false};
-                node.prev = LinkType{NULL_IND, false};
 
                 SlabAddrType old = intr::atomic::CAS_acq_rel(&head, nextInd, slabInd);
                 if (old == nextInd)
@@ -590,6 +591,8 @@ class SlabArena {
                 proxyNodeType& prev = proxies.arena[prevInd];
 
                 SlabAddrType prev2Ind;
+
+                // Check if `node` is the head
                 if (prevInd == NULL_IND)
                     prev2Ind = intr::atomic::load_acquire(&head);
                 else {
@@ -649,6 +652,7 @@ class SlabArena {
 
                 SlabAddrType prev2Ind;
 
+                // Check if `node` is the head
                 if (prevInd == NULL_IND) {
                     prev2Ind = intr::atomic::load_acquire(&head);
                 } else {
