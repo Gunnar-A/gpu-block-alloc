@@ -416,6 +416,7 @@ class Node{
         Type data;
         Link<IndexType> next;
         Link<IndexType> prev;
+        int refcount;
 
         __host__ __device__
         Node()
@@ -485,6 +486,26 @@ class SlabArena {
         }
 
 
+    private:
+        __host__ __device__
+        SlabAddrType deref(LinkType &linkAddr) {
+            while (true) {
+                SlabAddrType nodeInd = linkAddr->getIndex();
+
+                if (nodeInd == NULL_IND)
+                    return NULL_IND;
+
+                proxyNodeType& node = proxies.arena[nodeInd];
+                intr::atomic::add_acq_rel(&node.refcount, 1);
+
+                if (linkAddr->getIndex() == nodeInd)
+                    return nodeInd;
+
+                rel(linkAddr);
+            }
+        }
+
+    public:
         __host__ __device__
         SlabAddrType popList(SlabAddrType &head){
             while (true) {
