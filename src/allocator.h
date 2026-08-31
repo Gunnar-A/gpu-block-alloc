@@ -490,6 +490,27 @@ class SlabArena {
         __host__ __device__
         SlabAddrType deref(LinkType &linkAddr) {
             while (true) {
+                if (linkAddr->getFlag() == true)
+                    return NULL_IND;
+
+                SlabAddrType nodeInd = linkAddr->getIndex();
+
+                if (nodeInd == NULL_IND)
+                    return NULL_IND;
+
+                proxyNodeType& node = proxies.arena[nodeInd];
+                intr::atomic::add_acq_rel(&node.refcount, 1);
+
+                if (linkAddr->getIndex() == nodeInd)
+                    return nodeInd;
+
+                rel(linkAddr);
+            }
+        }
+
+        __host__ __device__
+        SlabAddrType deref_d(LinkType &linkAddr) {
+            while (true) {
                 SlabAddrType nodeInd = linkAddr->getIndex();
 
                 if (nodeInd == NULL_IND)
