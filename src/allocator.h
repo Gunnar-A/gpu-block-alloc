@@ -526,6 +526,13 @@ class SlabArena {
             }
         }
 
+    __host__ __device__
+    void rel(LinkType &linkAddr) {
+        SlabAddrType nodeInd = linkAddr->getIndex();
+        proxyNodeType& node = proxies.arena[nodeInd];
+        intr::atomic::add_acq_rel(&node.refcount, 1);
+    }
+
     public:
         __host__ __device__
         SlabAddrType popList(SlabAddrType &head){
