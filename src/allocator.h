@@ -420,7 +420,7 @@ class Node{
 
         __host__ __device__
         Node()
-            : next(AdrInfo<IndexType>::null(), false), prev(AdrInfo<IndexType>::null(), false) {}
+            : next(AdrInfo<IndexType>::null(), false), prev(AdrInfo<IndexType>::null(), false), refcount(0) {}
 }; // end of Node
 
 
