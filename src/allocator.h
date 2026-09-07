@@ -620,11 +620,19 @@ class SlabArena {
                 SlabAddrType link1Raw = link1.getRaw();
                 SlabAddrType old = intr::atomic::CAS_acq_rel(&next.prev.data, link1Raw, nodeInd);
                 if (old == link1Raw) {
-                    if (node.prev.getFlag() == true)
+                    copy(nodeInd);
+                    rel(link.getIndex());
+                    if (node.prev.getFlag() == true) {
+                        copy(nodeInd);
                         helpInsert(head, nodeInd, nextInd);
+                        rel(nodeInd);
+                    }
                     break;
                 }
             }
+
+            rel(nextInd);
+            rel(nodeInd);
         }
 
         // Sets deletion mark of prev link
