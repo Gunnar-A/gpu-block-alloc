@@ -591,16 +591,18 @@ class SlabArena {
             proxyNodeType& node = proxies.arena[slabInd];
             node.prev = LinkType{NULL_IND, false};
 
-            SlabAddrType nextInd = intr::atomic::load_acquire(&head);
+            SlabAddrType nextInd = deref(reinterpret_cast<LinkType*>(&head));
 
             while (true) {
                 node.next = LinkType{nextInd, false};
 
                 SlabAddrType old = intr::atomic::CAS_acq_rel(&head, nextInd, slabInd);
                 if (old == nextInd)
+                    copy(slabInd);
                     break;
 
-                nextInd = old;
+                rel(&nextInd);
+                nextInd = copy(old);
             };
 
             pushCommon(head, slabInd, nextInd);
