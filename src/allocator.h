@@ -750,25 +750,33 @@ class SlabArena {
 
                 // Check if `node` is the head
                 if (prevInd == NULL_IND) {
-                    prev2Ind = intr::atomic::load_acquire(&head);
+                    prev2Ind = deref(reinterpret_cast<LinkType*>(&head));
                 } else {
-                    LinkType prev2Link = prev.next;
-                    prev2Ind = prev.next.getIndex();
+                    prev2Ind = deref(&prev.next);
 
                     // Ensure `prev` is not marked
-                    if (prev2Link.getFlag() == true) {
+                    if (prev2Ind == NULL_IND) {
                         if (lastInd != NULL_IND) {
                             markPrev(prevInd);
 
-                            SlabAddrType next2Ind = prev.next.getIndex();
+                            prev2Ind = deref_d(&prev.next);
 
                             proxyNodeType& last = proxies.arena[lastInd];
-                            intr::atomic::CAS_acq_rel(&last.next.data, prevInd, next2Ind);
+                            SlabAddrType old = intr::atomic::CAS_acq_rel(&last.next.data, prevInd,
+                                                                         next2Ind);
+                            if (old == prevInd)
+                                rel(prevInd);
+                            else
+                                rel(prev2Ind);
+
+                            rel(prevInd);
 
                             prevInd = lastInd;
                             lastInd = NULL_IND;
                         } else {
-                            prevInd = prev.prev.getIndex();
+                            prev2Ind = deref_d(&prev.prev);
+                            rel(prevInd);
+                            prevInd = prev2Ind;
                         }
                         continue;
                     }
@@ -777,15 +785,22 @@ class SlabArena {
                 LinkType link1 = node.prev;
 
                 // Abort if `node` is marked
-                if (link1.getFlag() == true)
+                if (link1.getFlag() == true) {
+                    rel(prev2Ind);
                     break;
+                }
 
                 // Ensure `prev` is the previous node of `node`
                 if (prev2Ind != nodeInd) {
+                    if (lastInd != NULL_IND)
+                        rel(lastInd);
+
                     lastInd = prevInd;
                     prevInd = prev2Ind;
                     continue;
                 }
+
+                rel(prev2Ind);
 
                 // Abort if prev index of `node` is already updated
                 if (link1.getIndex() == prevInd)
@@ -802,13 +817,22 @@ class SlabArena {
                     // Update prev index of `node` with CAS
                     SlabAddrType link1Raw = link1.getRaw();
                     SlabAddrType old = intr::atomic::CAS_acq_rel(&node.prev.data, link1Raw, prevInd);
-                    // Check deletion mark of `prev.prev`
-                    // to ensure `prev` was not deleted concurrently
-                    // (not entirely necessary, but the benefit is well worth the extra check)
-                    if (old == link1Raw && (prevInd == NULL_IND || prev.prev.getFlag() == false))
-                        break;
+                    if (old == link1Raw) {
+                        if (prevInd != NULL_IND)
+                            copy(prevInd);
+                        rel(link1.getIndex());
+
+                        // Check deletion mark of `prev.prev` if `node` is not the head
+                        // to ensure `prev` was not deleted concurrently
+                        // (not entirely necessary, but the benefit is well worth the extra check)
+                        if (prevInd == NULL_IND || prev.prev.getFlag() == false)
+                            break;
+                    }
                 }
             }
+
+            if (last != NULL_IND)
+                rel(lastInd);
 
             return prevInd;
         }
