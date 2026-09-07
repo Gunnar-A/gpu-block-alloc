@@ -536,11 +536,13 @@ class SlabArena {
         __host__ __device__
         SlabAddrType popList(SlabAddrType &head){
             while (true) {
-                SlabAddrType currentInd = intr::atomic::load_acquire(&head);
+                SlabAddrType currentInd = deref(reinterpret_cast<LinkType*>(&head));
 
                 // Stop if the list is empty
-                if (currentInd == NULL_IND)
+                if (currentInd == NULL_IND) {
+                    rel(currentInd);
                     return NULL_IND;
+                }
 
                 proxyNodeType& current = proxies.arena[currentInd];
                 LinkType nextLink = current.next;
@@ -548,6 +550,7 @@ class SlabArena {
                 // Ensure deletion is completed and retry if the node is marked
                 if (nextLink.getFlag() == true) {
                     helpDelete(head, currentInd);
+                    rel(currentInd);
                     continue;
                 }
 
@@ -561,13 +564,23 @@ class SlabArena {
                     helpDelete(head, currentInd);
 
                     // update prev index of `next`
-                    SlabAddrType nextInd = current.next.getIndex();
-                    if (nextInd != NULL_IND)
-                        helpInsert(head, NULL_IND, nextInd);
+                    SlabAddrType nextInd = deref_d(&current.next);
+                    if (nextInd != NULL_IND) {
+                        SlabAddrType prevInd = helpInsert(head, NULL_IND, nextInd);
+                        rel(prevInd);
+                    }
+                    rel(nextInd);
 
-                    return currentInd;
+                    poppedInd = currentInd;
+                    break;
                 }
+
+                rel(currentInd);
             }
+
+            removeCrossReference(poppedInd);
+            rel(poppedInd);
+            return poppedInd;
         } // end of pop
 
         __host__ __device__
