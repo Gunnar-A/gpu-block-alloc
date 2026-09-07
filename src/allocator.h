@@ -644,8 +644,8 @@ class SlabArena {
 
             SlabAddrType lastInd = NULL_IND;
             proxyNodeType& node = proxies.arena[nodeInd];
-            SlabAddrType prevInd = node.prev.getIndex();
-            SlabAddrType nextInd = node.next.getIndex();
+            SlabAddrType prevInd = deref_d(node.prev);
+            SlabAddrType nextInd = deref_d(node.next);
 
             // Loop to update next index of `prev`
             while (true) {
@@ -654,7 +654,9 @@ class SlabArena {
                 // Ensure `next` is not marked
                 if (next.next.getFlag() == true) {
                     markPrev(nextInd);
-                    nextInd = next.next.getIndex();
+                    next2Ind = next.next.getIndex();
+                    rel(next);
+                    nextInd = next2Ind;
                     continue;
                 }
 
@@ -664,26 +666,34 @@ class SlabArena {
                 SlabAddrType prev2Ind;
 
                 // Check if `node` is the head
-                if (prevInd == NULL_IND)
-                    prev2Ind = intr::atomic::load_acquire(&head);
-                else {
-                    LinkType prev2Link = prev.next;
-                    prev2Ind = prev.next.getIndex();
+                if (prevInd == NULL_IND) {
+                    prev2Ind = deref(reinterpret_cast<LinkType*>(&head));
+                } else {
+                    prev2Ind = deref(&prev.next);
 
                     // Ensure `prev` is not marked
-                    if (prev2Link.getFlag() == true) {
+                    if (prev2Ind == NULL_IND) {
                         if (lastInd != NULL_IND) {
                             markPrev(prevInd);
 
-                            SlabAddrType next2Ind = prev.next.getIndex();
+                            prev2Ind = deref_d(&prev.next);
 
                             proxyNodeType& last = proxies.arena[lastInd];
-                            intr::atomic::CAS_acq_rel(&last.next.data, prevInd, next2Ind);
+                            SlabAddrType old = intr::atomic::CAS_acq_rel(&last.next.data, prevInd,
+                                                                         next2Ind);
+                            if (old == prevInd)
+                                rel(prevInd);
+                            else
+                                rel(prev2Ind);
+
+                            rel(prevInd);
 
                             prevInd = lastInd;
                             lastInd = NULL_IND;
                         } else {
-                            prevInd = prev.prev.getIndex();
+                            prev2Ind = deref_d(&prev.prev);
+                            rel(prevInd);
+                            prevInd = prev2Ind;
                         }
                         continue;
                     }
@@ -691,10 +701,15 @@ class SlabArena {
 
                 // Ensure `prev` is the previous node of `node`
                 if (prev2Ind != nodeInd) {
+                    if (lastInd != NULL_IND)
+                        rel(lastInd);
+
                     lastInd = prevInd;
                     prevInd = prev2Ind;
                     continue;
                 }
+
+                rel(prev2Ind);
 
                 // Update next index of `prev` with CAS
                 SlabAddrType old;
@@ -703,9 +718,19 @@ class SlabArena {
                 else
                     old = intr::atomic::CAS_acq_rel(&prev.next.data, nodeInd, nextInd);
 
-                if (old == nodeInd)
+                if (old == nodeInd) {
+                    copy(nextInd);
+                    rel(nodeInd);
                     break;
+                }
             }
+
+            if (last != NULL_IND)
+                rel(lastInd);
+
+            if (prevInd != NULL_IND)
+                rel(prevInd);
+            rel(nextInd);
         }
 
         // Updates then returns prev index of node
