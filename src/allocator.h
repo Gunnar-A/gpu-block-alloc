@@ -838,6 +838,30 @@ class SlabArena {
         }
 
         __host__ __device__
+        void removeCrossReference(SlabAddrType nodeInd) {
+            proxyNodeType& node = proxies.arena[nodeInd];
+            while (true) {
+                prevInd = node.prev.getIndex();
+                proxyNodeType& prev = proxies.arena[prevInd];
+                if (prev.prev.getFlag() == true) {
+                    prev2Ind = deref_d(&prev.prev);
+                    node.prev = LinkType{prev2Ind, true};
+                    rel(prevInd);
+                    continue;
+                }
+                nextInd = node.next.getIndex();
+                proxyNodeType& next = proxies.arena[nextInd];
+                if (next.prev.getFlag() == true) {
+                    next2Ind = deref_d(&next.next);
+                    node.next = LinkType{next2Ind, true};
+                    rel(nextInd);
+                    continue;
+                }
+                break;
+            }
+        }
+
+        __host__ __device__
         void markPrev(SlabAddrType nodeInd) {
             proxyNodeType& node = proxies.arena[nodeInd];
             while (true) {
