@@ -504,7 +504,7 @@ class SlabArena {
                 if (linkAddr->getIndex() == nodeInd)
                     return nodeInd;
 
-                rel(linkAddr);
+                rel(nodeInd);
             }
         }
 
@@ -522,15 +522,14 @@ class SlabArena {
                 if (linkAddr->getIndex() == nodeInd)
                     return nodeInd;
 
-                rel(linkAddr);
+                rel(nodeInd);
             }
         }
 
     __host__ __device__
-    void rel(LinkType &linkAddr) {
-        SlabAddrType nodeInd = linkAddr->getIndex();
+    void rel(SlabAddrType nodeInd) {
         proxyNodeType& node = proxies.arena[nodeInd];
-        intr::atomic::add_acq_rel(&node.refcount, 1);
+        intr::atomic::add_acq_rel(&node.refcount, -1);
     }
 
     public:
