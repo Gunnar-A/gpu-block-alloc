@@ -618,7 +618,12 @@ class SlabArena {
 
             proxyNodeType& node = proxies.arena[slabInd];
 
+            bool looped_test = false;
             while (true) {
+                if (looped_test)
+                    printf("I'm looping trying to claim slab %llu, its refcount is %d\n", slabInd, node.refcount);
+                looped_test = true;
+
                 bool old = intr::atomic::CAS_acq_rel(&node.claimable, true, false);
                 if (old == true)
                     break;
@@ -948,14 +953,14 @@ class SlabArena {
         __host__ __device__
         SlabAddrType popFreeList(){
             SlabAddrType popped = popList(freeList.head);
-            printf("Free list head is %llu after pop\n", freeList.head);
+            printf("Free list head is %llu after popping %llu\n", freeList.head, popped);
             return popped;
         } // end of pop
 
         __host__ __device__
         void pushFreeList(SlabAddrType slabInd){
             pushList(freeList.head,slabInd);
-            printf("Free list head is %llu after push\n", freeList.head);
+            printf("Free list head is %llu after pushing %llu\n", freeList.head, slabInd);
         } // end of push
 
         __host__ __device__
@@ -1180,14 +1185,14 @@ class SimpleAllocator {
         void pushPartialList(SlabAddrType slabInd){
             slabAllocator.pushList(partialList.head,slabInd);
             slabAllocator.validatePartialList(partialList.head);
-            printf("Partial list head is %llu after push\n", partialList.head);
+            printf("Partial list head is %llu after pushing %llu\n", partialList.head, slabInd);
         } // end of push
 
         __host__ __device__
         void removeFromPartialList(SlabAddrType slabInd){
             slabAllocator.removeFromList(partialList.head,slabInd);
             slabAllocator.validatePartialList(partialList.head);
-            printf("Partial list head is %llu after remove\n", partialList.head);
+            printf("Partial list head is %llu after removing %llu\n", partialList.head, slabInd);
         } // end
 
 
