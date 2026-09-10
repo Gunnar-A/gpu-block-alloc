@@ -472,6 +472,8 @@ class SlabArena {
         __host__ __device__
         SlabArena() {
             intr::atomic::store_relaxed(&freeList.head, 0ull);
+            proxies.arena[0].refcount++;
+
             intr::atomic::store_relaxed(&nextSearch, static_cast<size_t>(0));
             
             for(size_t i = 0; i < SLAB_COUNT; i++){
@@ -480,8 +482,19 @@ class SlabArena {
                 intr::atomic::store_relaxed(&proxies.arena[i].data.reservationState, static_cast<uint32_t>(slabProxyType::FREE));
 
                 // build list
-                proxies.arena[i].next = (i == SLAB_COUNT - 1) ? LinkType{NULL_IND, false} : LinkType{i + 1, false};
-                proxies.arena[i].prev = (i == 0) ? LinkType{NULL_IND, false} : LinkType{i - 1, false};
+                if (i == SLAB_COUNT - 1) {
+                    proxies.arena[i].next = LinkType{NULL_IND, false};
+                } else {
+                    proxies.arena[i].next = LinkType{i + 1, false};
+                    proxies.arena[i + 1].refcount++;
+                }
+
+                if (i == 0) {
+                    proxies.arena[i].prev = LinkType{NULL_IND, false};
+                } else {
+                    proxies.arena[i].prev = LinkType{i - 1, false};
+                    proxies.arena[i - 1].refcount++;
+                }
             }
         }
 
