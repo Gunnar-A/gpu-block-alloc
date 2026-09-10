@@ -417,10 +417,12 @@ class Node{
         Link<IndexType> next;
         Link<IndexType> prev;
         int refcount;
+        bool claimable; // Indicates when the node can be pushed onto a new list
 
         __host__ __device__
         Node()
-            : next(AdrInfo<IndexType>::null(), false), prev(AdrInfo<IndexType>::null(), false), refcount(0) {}
+            : next(AdrInfo<IndexType>::null(), false), prev(AdrInfo<IndexType>::null(), false),
+              refcount(0), claimable(false) {}
 }; // end of Node
 
 
@@ -539,17 +541,22 @@ class SlabArena {
             }
         }
 
-    __host__ __device__
-    void rel(SlabAddrType nodeInd) {
-        proxyNodeType& node = proxies.arena[nodeInd];
-        intr::atomic::add_acq_rel(&node.refcount, -1);
-    }
-
         __host__ __device__
         SlabAddrType copy(SlabAddrType nodeInd) {
             proxyNodeType& node = proxies.arena[nodeInd];
             intr::atomic::add_acq_rel(&node.refcount, 1);
             return nodeInd;
+        }
+
+        __host__ __device__
+        void rel(SlabAddrType nodeInd) {
+            proxyNodeType& node = proxies.arena[nodeInd];
+            int old = intr::atomic::add_acq_rel(&node.refcount, -1);
+            if (old == 1) {
+                rel(node.prev.getIndex());
+                rel(node.next.getIndex());
+                node.claimable = true;
+            }
         }
 
     public:
@@ -610,10 +617,18 @@ class SlabArena {
                 return;
 
             proxyNodeType& node = proxies.arena[slabInd];
-            node.prev = LinkType{NULL_IND, false};
+
+            while (true) {
+                bool old = intr::atomic::CAS_acq_rel(&node.claimable, true, false);
+                if (old == true)
+                    break;
+            }
+
+            copy(slabInd);
 
             SlabAddrType nextInd = deref(reinterpret_cast<LinkType*>(&head));
 
+            node.prev = LinkType{NULL_IND, false};
             while (true) {
                 node.next = LinkType{nextInd, false};
 
