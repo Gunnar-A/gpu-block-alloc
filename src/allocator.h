@@ -542,8 +542,10 @@ class SlabArena {
     public:
         __host__ __device__
         SlabAddrType popList(SlabAddrType &head){
+            SlabAddrType currentInd;
+
             while (true) {
-                SlabAddrType currentInd = deref(reinterpret_cast<LinkType*>(&head));
+                currentInd = deref(reinterpret_cast<LinkType*>(&head));
 
                 // Stop if the list is empty
                 if (currentInd == NULL_IND) {
@@ -578,16 +580,15 @@ class SlabArena {
                     }
                     rel(nextInd);
 
-                    poppedInd = currentInd;
                     break;
                 }
 
                 rel(currentInd);
             }
 
-            removeCrossReference(poppedInd);
-            rel(poppedInd);
-            return poppedInd;
+            removeCrossReference(currentInd);
+            rel(currentInd);
+            return currentInd;
         } // end of pop
 
         __host__ __device__
