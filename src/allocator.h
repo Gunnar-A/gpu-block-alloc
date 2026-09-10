@@ -890,14 +890,18 @@ class SlabArena {
                     break;
                 SlabAddrType link1Raw = link1.getRaw();
                 SlabAddrType old = intr::atomic::CAS_acq_rel(&node.next.data, link1Raw,
-                                                             LinkType::makeMarkedRaw(link1.getIndex()));
+                                                             LinkType::makeMarkedRaw(link1Raw));
                 if (old == link1Raw) {
                     helpDelete(head, slabInd);
 
-                    SlabAddrType prevInd = node.prev.getIndex();
+                    SlabAddrType prevInd = copy(node.prev.getIndex());
                     SlabAddrType link1Ind = link1.getIndex();
                     if (link1Ind != NULL_IND)
                         helpInsert(head, prevInd, link1Ind);
+
+                    rel(prevInd);
+
+                    removeCrossReference(slabInd);
 
                     break;
                 }
