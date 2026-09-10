@@ -503,7 +503,7 @@ class SlabArena {
 
     private:
         __host__ __device__
-        SlabAddrType deref(LinkType &linkAddr) {
+        SlabAddrType deref(LinkType* linkAddr) {
             while (true) {
                 if (linkAddr->getFlag() == true)
                     return NULL_IND;
@@ -524,7 +524,7 @@ class SlabArena {
         }
 
         __host__ __device__
-        SlabAddrType deref_d(LinkType &linkAddr) {
+        SlabAddrType deref_d(LinkType* linkAddr) {
             while (true) {
                 SlabAddrType nodeInd = linkAddr->getIndex();
 
@@ -637,7 +637,7 @@ class SlabArena {
                     copy(slabInd);
                     break;
 
-                rel(&nextInd);
+                rel(nextInd);
                 nextInd = copy(old);
             };
 
@@ -657,7 +657,7 @@ class SlabArena {
                 SlabAddrType old = intr::atomic::CAS_acq_rel(&next.prev.data, link1Raw, nodeInd);
                 if (old == link1Raw) {
                     copy(nodeInd);
-                    rel(link.getIndex());
+                    rel(link1.getIndex());
                     if (node.prev.getFlag() == true) {
                         copy(nodeInd);
                         helpInsert(head, nodeInd, nextInd);
@@ -680,8 +680,8 @@ class SlabArena {
 
             SlabAddrType lastInd = NULL_IND;
             proxyNodeType& node = proxies.arena[nodeInd];
-            SlabAddrType prevInd = deref_d(node.prev);
-            SlabAddrType nextInd = deref_d(node.next);
+            SlabAddrType prevInd = deref_d(&node.prev);
+            SlabAddrType nextInd = deref_d(&node.next);
 
             // Loop to update next index of `prev`
             while (true) {
@@ -690,8 +690,8 @@ class SlabArena {
                 // Ensure `next` is not marked
                 if (next.next.getFlag() == true) {
                     markPrev(nextInd);
-                    next2Ind = next.next.getIndex();
-                    rel(next);
+                    SlabAddrType next2Ind = deref_d(&next.next);
+                    rel(nextInd);
                     nextInd = next2Ind;
                     continue;
                 }
@@ -716,7 +716,7 @@ class SlabArena {
 
                             proxyNodeType& last = proxies.arena[lastInd];
                             SlabAddrType old = intr::atomic::CAS_acq_rel(&last.next.data, prevInd,
-                                                                         next2Ind);
+                                                                         prev2Ind);
                             if (old == prevInd)
                                 rel(prevInd);
                             else
@@ -761,7 +761,7 @@ class SlabArena {
                 }
             }
 
-            if (last != NULL_IND)
+            if (lastInd != NULL_IND)
                 rel(lastInd);
 
             if (prevInd != NULL_IND)
@@ -799,7 +799,7 @@ class SlabArena {
 
                             proxyNodeType& last = proxies.arena[lastInd];
                             SlabAddrType old = intr::atomic::CAS_acq_rel(&last.next.data, prevInd,
-                                                                         next2Ind);
+                                                                         prev2Ind);
                             if (old == prevInd)
                                 rel(prevInd);
                             else
@@ -867,7 +867,7 @@ class SlabArena {
                 }
             }
 
-            if (last != NULL_IND)
+            if (lastInd != NULL_IND)
                 rel(lastInd);
 
             return prevInd;
@@ -877,18 +877,18 @@ class SlabArena {
         void removeCrossReference(SlabAddrType nodeInd) {
             proxyNodeType& node = proxies.arena[nodeInd];
             while (true) {
-                prevInd = node.prev.getIndex();
+                SlabAddrType prevInd = node.prev.getIndex();
                 proxyNodeType& prev = proxies.arena[prevInd];
                 if (prev.prev.getFlag() == true) {
-                    prev2Ind = deref_d(&prev.prev);
+                    SlabAddrType prev2Ind = deref_d(&prev.prev);
                     node.prev = LinkType{prev2Ind, true};
                     rel(prevInd);
                     continue;
                 }
-                nextInd = node.next.getIndex();
+                SlabAddrType nextInd = node.next.getIndex();
                 proxyNodeType& next = proxies.arena[nextInd];
                 if (next.prev.getFlag() == true) {
-                    next2Ind = deref_d(&next.next);
+                    SlabAddrType next2Ind = deref_d(&next.next);
                     node.next = LinkType{next2Ind, true};
                     rel(nextInd);
                     continue;
