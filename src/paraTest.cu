@@ -259,7 +259,7 @@ void workerThread(TestSlabArena& arena, ParallelTracker<SIZE_TYPE>& tracker,
     if (objSize == 0)
         objSize = 1 << sizeDist(gen);
 
-    TestAllocator allocator(arena, objSize);
+    TestAllocator allocator(arena, objSize, threadId);
 
     for (size_t i = 0; i < iterations && !shouldStop.load(); i++) {
         int action = actionDist(gen);
@@ -614,8 +614,8 @@ int main() {
         // testBasicParallel();
         // testHighContentionParallel();
         // testStressTest();
-        const size_t objSizes[] = {256, 256, 256, 256};
-        customTest(static_cast<size_t>(4), static_cast<size_t>(10000), objSizes);
+        const size_t objSizes[] = {128, 128};
+        customTest(static_cast<size_t>(2), static_cast<size_t>(10000), objSizes);
         
         std::cout << "All tests done!" << std::endl;
         

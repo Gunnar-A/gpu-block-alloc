@@ -1174,6 +1174,7 @@ class SimpleAllocator {
         SlabAllocatorType& slabAllocator;
         size_t objectSize;
         List<SlabAddrType> partialList;
+        unsigned int listID;
 
 
         __host__ __device__
@@ -1185,23 +1186,24 @@ class SimpleAllocator {
         void pushPartialList(SlabAddrType slabInd){
             slabAllocator.pushList(partialList.head,slabInd);
             slabAllocator.validatePartialList(partialList.head);
-            printf("Partial list head is %llu after pushing %llu\n", partialList.head, slabInd);
+            printf("Partial list head of allocator %d is %llu after pushing %llu\n", listID, partialList.head, slabInd);
         } // end of push
 
         __host__ __device__
         void removeFromPartialList(SlabAddrType slabInd){
             slabAllocator.removeFromList(partialList.head,slabInd);
             slabAllocator.validatePartialList(partialList.head);
-            printf("Partial list head is %llu after removing %llu\n", partialList.head, slabInd);
+            printf("Partial list head of allocator %d is %llu after removing %llu\n", listID, partialList.head, slabInd);
         } // end
 
 
     public:
         __host__ __device__
-        SimpleAllocator(SlabAllocatorType& slabAlloc, size_t objSize)
+        SimpleAllocator(SlabAllocatorType& slabAlloc, size_t objSize, unsigned int listID = static_cast<unsigned int>(-1))
             : slabAllocator(slabAlloc)
             , objectSize(objSize == 0 ? 1 : objSize)
             , partialList{NULL_IND}
+            , listID{listID}
         {}
 
 
